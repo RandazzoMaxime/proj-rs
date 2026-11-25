@@ -6,6 +6,10 @@ rest is outside semver.
 
 ## Unreleased
 
+- PDAL bench: when github.com refuses the remote COPC file, `pdal_io_copc_remote_reader_test`
+  reads PDAL's copy on S3, once its sha256 matches the Git LFS object id of the GitHub file.
+  PDAL 2.10.2 now passes 142 of 142 tests with PROJ 9.9.0 and with proj-rs.
+
 - The GMT 6.5.0 bench (`tools/clients/gmt.sh`, `docs/CLIENTS-gmt.md`) runs the suite as GMT's CI
   does: the baseline images of the release (`baseline-images.zip`, each output checked against
   the md5 of its `.dvc` file by `gmt_baselines.py`; the DVC remote refuses anonymous reads), the

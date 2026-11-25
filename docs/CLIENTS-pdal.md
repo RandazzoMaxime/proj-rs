@@ -32,6 +32,16 @@ Deux tests lisent des fichiers distants :
 
 Le script vérifie d'abord que ces adresses répondent, et le dit quand l'une ne répond pas.
 
+Un proxy de sortie qui limite GitHub à certains dépôts refuse l'adresse de `github.com` (HTTP 403,
+« GitHub access to this repository is not enabled for this session »). Le script vérifie alors la
+copie que PDAL publie sur S3, `https://s3.amazonaws.com/hobu-lidar/autzen-classified.copc.laz` :
+son sha256 doit être l'oid Git LFS du fichier de PDAL/data
+(`db2d56cdfa058bffccdc5d6019dae2fc9c6a551df10a5523c06c76a3e25a27fa`, l'ETag que
+`media.githubusercontent.com` donne au même fichier), sinon le script s'arrête. Le test lit alors
+cette copie : mêmes octets, mêmes chemins de code (lecteur COPC direct et `/vsicurl/` de GDAL).
+Le script remplace l'adresse dans `test/unit/io/CopcRemoteReaderTest.cpp` et vérifie d'abord
+qu'elle y figure.
+
 La couche HTTP de PDAL (arbiter) donne le proxy de `HTTPS_PROXY` aussi aux adresses `http://`.
 Derrière un proxy qui n'accepte que `CONNECT` (pas de `HTTP_PROXY`), ses requêtes HTTP simples sont
 refusées, et `StacReaderTest.schema_validate_test` échoue sur le schéma JSON. Dans ce cas, le
@@ -52,20 +62,12 @@ appels.
 
 | | PROJ 9.9.0 | proj-rs |
 |---|---:|---:|
-| Tests réussis | 141 sur 142 | 141 sur 142 |
-| Tests qui échouent | `pdal_io_copc_remote_reader_test` | le même |
+| Tests réussis | 142 sur 142 | 142 sur 142 |
+| Tests qui échouent | aucun | aucun |
 
-Le seul échec vient du réseau de la machine du banc, pas de PDAL ni de libproj. Le proxy de
-sortie de la session refuse cette adresse de `github.com` :
-
-    C++ exception with description "Could not read from
-    'github.com/PDAL/data/raw/refs/heads/main/autzen/autzen-classified.copc.laz'. Response message
-    returned '{"message":"GitHub access to this repository is not enabled for this session. ..."}'"
-    thrown in the test body.
-    [  FAILED  ] CopcRemoteReaderTest.vsi
-
-Le script l'annonce avant la suite (`remote test file NOT reachable (HTTP 403)`). Sur une machine
-qui atteint `github.com`, ce test lit le fichier ; il n'a pas tourné ici.
+Les deux tests distants ont tourné : `pdal_io_stac_reader_test` par `split_proxy.py`, et
+`pdal_io_copc_remote_reader_test` sur la copie S3 vérifiée (`the copy matches the LFS object of
+PDAL/data`).
 
 Preuves de la dernière passe :
 
@@ -74,13 +76,13 @@ Preuves de la dernière passe :
     ref: no DT_RPATH that could load another libproj
     ref: LD_DEBUG=libs: calling init: .../pdal/ref-prefix/lib/libproj.so.25
     ref: interposer: .../pdal/ref-prefix/lib/libproj.so.25.9.9.0, proj_create=2/0 proj_create_crs_to_crs_from_pj=1/0 proj_create_from_wkt=3/0 proj_create_from_database=2/0 proj_trans=1065/1065
-    ref: interposer: 248 processes mapped a libproj at start, 111 called into it, all .../pdal/ref-prefix/lib/libproj.so.25.9.9.0
+    ref: interposer: 248 processes mapped a libproj at start, 112 called into it, all .../pdal/ref-prefix/lib/libproj.so.25.9.9.0
     ours: ldd pdal: libproj.so.25 => .../pdal/ours/lib/libproj.so.25
     ours: ldd libpdalcpp.so: libproj.so.25 => .../pdal/ours/lib/libproj.so.25
     ours: no DT_RPATH that could load another libproj
     ours: LD_DEBUG=libs: calling init: .../pdal/ours/lib/libproj.so.25
     ours: interposer: .../pdal/ours/lib/libproj.so.25, proj_create=2/0 proj_create_crs_to_crs_from_pj=1/0 proj_create_from_wkt=3/0 proj_create_from_database=2/0 proj_trans=1065/1065
-    ours: interposer: 248 processes mapped a libproj at start, 111 called into it, all .../pdal/ours/lib/libproj.so.25
+    ours: interposer: 248 processes mapped a libproj at start, 112 called into it, all .../pdal/ours/lib/libproj.so.25
 
 ## Écarts trouvés et corrigés
 
