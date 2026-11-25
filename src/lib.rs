@@ -133,7 +133,6 @@ mod proj_info;
 mod proj_iso;
 mod proj_meta;
 mod projdb;
-#[cfg(target_os = "linux")]
 mod projdb_exe;
 mod projections;
 mod projmath;
