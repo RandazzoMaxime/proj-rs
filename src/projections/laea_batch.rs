@@ -1,4 +1,4 @@
-//! `laea` ellipsoïdal, modes oblique et équatorial, en quatre voies : `Laea::forward_ellipsoid`
+//! `laea` ellipsoïdal, modes oblique et équatorial, en `N` voies : `Laea::forward_ellipsoid`
 //! et `Laea::inverse_ellipsoid`, opération par opération, avec la série authalique de
 //! `projmath` (coefficients calculés une fois à la création, le scalaire les refait par point).
 //! Les modes polaires, la sphère et un `n` hors de la série n'ont pas de noyau vectoriel. Un groupe
@@ -13,12 +13,17 @@ mod vector {
     use super::super::{Mode, EPS10};
     use super::{Laea, UnitLanes};
     use crate::simd::kernels;
-    use crate::simd::{Token, V4};
+    use crate::simd::{Mask, Vector, VectorMath};
 
     impl UnitLanes for Laea {
         #[inline(always)]
-        fn forward_lanes(&self, tok: Token, lam: V4, phi: V4) -> Option<(V4, V4)> {
-            let k = |value| V4::splat(tok, value);
+        fn forward_lanes<V: Vector<N>, const N: usize>(
+            &self,
+            tok: V::Token,
+            lam: V,
+            phi: V,
+        ) -> Option<(V, V)> {
+            let k = |value| V::splat(tok, value);
             if !kernels::latitude_in_domain(tok, phi)
                 .and(lam.is_finite())
                 .all()
@@ -51,8 +56,13 @@ mod vector {
         }
 
         #[inline(always)]
-        fn inverse_lanes(&self, tok: Token, x: V4, y: V4) -> Option<(V4, V4)> {
-            let k = |value| V4::splat(tok, value);
+        fn inverse_lanes<V: Vector<N>, const N: usize>(
+            &self,
+            tok: V::Token,
+            x: V,
+            y: V,
+        ) -> Option<(V, V)> {
+            let k = |value| V::splat(tok, value);
             let (x, y) = (x / k(self.dd), y * k(self.dd));
             let rho = x.hypot(y);
             let argument = k(0.5) * rho / k(self.rq);

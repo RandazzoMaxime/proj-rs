@@ -24,6 +24,7 @@ slows an existing case says so in its PR.
 | 4 | AVX2 batch Transverse Mercator, progress bench | ✅ | |
 | 5 | AVX2 batch Lambert-93 | ✅ | |
 | 6 | Mercator and Web Mercator | ✅ | |
+| 6b | AVX-512 batch path (8 lanes), feature `avx512` | ✅ | `src/simd/v8.rs`, generic `Vector<N>`; Rust >= 1.89, off by default for the 1.83 floor; 1.1x-1.8x faster than AVX2 on batch conversions (Xeon 6985P-C) |
 | 7 | 7-parameter Helmert | ✅ | |
 | 8 | Move the reference to PROJ 9.9 | ✅ | Behavior is checked against the PROJ 9.9.0 `gie` suite and the CLIs report 9.9.0. The reference values of `PORTING-tmerc`, `-lcc`, `-merc` and `-helmert` were re-measured with `cs2cs` and `cct` 9.9.0 and are identical; PROJ's release notes since 9.4 only touch spherical tmerc at `lat_0` and an inverse-Helmert pair, both inside the `gie` suite |
 | 9 | PROJ string parser | ✅ | `Operation::create` in `src/engine.rs`. An unknown `+proj` is a creation error |

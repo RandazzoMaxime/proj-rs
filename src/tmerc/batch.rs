@@ -1,13 +1,13 @@
-//! Transverse Mercator exact par lots, quatre points à la fois.
+//! Transverse Mercator exact par lots, `N` points à la fois.
 //!
 //! Les formules sont celles de [`Tmerc::fwd_unit`] et [`Tmerc::inv_unit`], opération par
-//! opération, écrites contre [`crate::simd::V4`]. Un groupe de quatre qu'une voie sort du
+//! opération, écrites contre [`V`]. Un groupe de `N` qu'une voie sort du
 //! domaine du noyau (valeur non finie, latitude hors de ±90°, `|Ce|` au-delà de la limite) passe
 //! par le chemin scalaire : ses points valent exactement ceux de [`Tmerc::forward`] et
 //! [`Tmerc::inverse`].
 
 use super::Tmerc;
-use crate::simd::Lanes;
+use crate::simd::{Lanes, Vector};
 
 /// `forward` en lot : degrés vers mètres.
 pub(super) struct Forward<'a>(pub(super) &'a Tmerc);
@@ -27,12 +27,12 @@ impl Lanes for Forward<'_> {
 
     #[cfg(simd_lanes)]
     #[inline(always)]
-    fn lanes(
+    fn lanes<V: Vector<N>, const N: usize>(
         &self,
-        tok: crate::simd::Token,
-        lon_deg: crate::simd::V4,
-        lat_deg: crate::simd::V4,
-    ) -> Option<(crate::simd::V4, crate::simd::V4)> {
+        tok: V::Token,
+        lon_deg: V,
+        lat_deg: V,
+    ) -> Option<(V, V)> {
         vector::forward(self.0, tok, lon_deg, lat_deg)
     }
 }
@@ -46,12 +46,12 @@ impl Lanes for ForwardRad<'_> {
 
     #[cfg(simd_lanes)]
     #[inline(always)]
-    fn lanes(
+    fn lanes<V: Vector<N>, const N: usize>(
         &self,
-        tok: crate::simd::Token,
-        lon_rad: crate::simd::V4,
-        lat_rad: crate::simd::V4,
-    ) -> Option<(crate::simd::V4, crate::simd::V4)> {
+        tok: V::Token,
+        lon_rad: V,
+        lat_rad: V,
+    ) -> Option<(V, V)> {
         vector::forward_rad(self.0, tok, lon_rad, lat_rad)
     }
 }
@@ -65,12 +65,12 @@ impl Lanes for Inverse<'_> {
 
     #[cfg(simd_lanes)]
     #[inline(always)]
-    fn lanes(
+    fn lanes<V: Vector<N>, const N: usize>(
         &self,
-        tok: crate::simd::Token,
-        east: crate::simd::V4,
-        north: crate::simd::V4,
-    ) -> Option<(crate::simd::V4, crate::simd::V4)> {
+        tok: V::Token,
+        east: V,
+        north: V,
+    ) -> Option<(V, V)> {
         vector::inverse(self.0, tok, east, north)
     }
 }
@@ -81,17 +81,23 @@ mod vector {
 
     use super::Tmerc;
     use crate::simd::kernels::{self, DEG_TO_RAD, RAD_TO_DEG};
-    use crate::simd::{Token, V4};
+    use crate::simd::{Mask, Vector, VectorMath};
     use crate::tmerc::{CE_LIMIT, ORDER};
 
     /// `gatg` : la série de Clenshaw réelle, coefficients `p1`.
     #[inline(always)]
-    fn gatg(tok: Token, p1: &[f64; ORDER], b: V4, cos_2b: V4, sin_2b: V4) -> V4 {
-        let k = |value| V4::splat(tok, value);
+    fn gatg<V: Vector<N>, const N: usize>(
+        tok: V::Token,
+        p1: &[f64; ORDER],
+        b: V,
+        cos_2b: V,
+        sin_2b: V,
+    ) -> V {
+        let k = |value| V::splat(tok, value);
         let two = k(2.0) * cos_2b;
-        let mut h2 = V4::zero(tok);
+        let mut h2 = V::zero(tok);
         let mut h1 = k(p1[ORDER - 1]);
-        let mut h = V4::zero(tok);
+        let mut h = V::zero(tok);
         for idx in (0..ORDER - 1).rev() {
             // `-h2 + two * h1 + p` : un produit fusionné et une soustraction.
             h = two.mul_add(h1, k(p1[idx]) - h2);
@@ -103,20 +109,20 @@ mod vector {
 
     /// `clenshaw_complex` : la série de Clenshaw complexe, coefficients `a`.
     #[inline(always)]
-    fn clenshaw_complex(
-        tok: Token,
+    fn clenshaw_complex<V: Vector<N>, const N: usize>(
+        tok: V::Token,
         a: &[f64; ORDER],
-        sin_arg_r: V4,
-        cos_arg_r: V4,
-        sinh_arg_i: V4,
-        cosh_arg_i: V4,
-    ) -> (V4, V4) {
-        let k = |value| V4::splat(tok, value);
+        sin_arg_r: V,
+        cos_arg_r: V,
+        sinh_arg_i: V,
+        cosh_arg_i: V,
+    ) -> (V, V) {
+        let k = |value| V::splat(tok, value);
         let mut r = k(2.0) * cos_arg_r * cosh_arg_i;
         let mut i = k(-2.0) * sin_arg_r * sinh_arg_i;
-        let mut hr1 = V4::zero(tok);
-        let mut hi1 = V4::zero(tok);
-        let mut hi = V4::zero(tok);
+        let mut hr1 = V::zero(tok);
+        let mut hi1 = V::zero(tok);
+        let mut hi = V::zero(tok);
         let mut hr = k(a[ORDER - 1]);
         for idx in (0..ORDER - 1).rev() {
             let hr2 = hr1;
@@ -131,21 +137,31 @@ mod vector {
         ((-i).mul_add(hi, r * hr), r.mul_add(hi, i * hr))
     }
 
-    /// [`Tmerc::forward`] sur quatre points.
+    /// [`Tmerc::forward`] sur `N` points.
     #[inline(always)]
-    pub(super) fn forward(t: &Tmerc, tok: Token, lon_deg: V4, lat_deg: V4) -> Option<(V4, V4)> {
-        let k = |value| V4::splat(tok, value);
+    pub(super) fn forward<V: Vector<N>, const N: usize>(
+        t: &Tmerc,
+        tok: V::Token,
+        lon_deg: V,
+        lat_deg: V,
+    ) -> Option<(V, V)> {
+        let k = |value| V::splat(tok, value);
         forward_rad(t, tok, lon_deg * k(DEG_TO_RAD), lat_deg * k(DEG_TO_RAD))
     }
 
-    /// [`Tmerc::forward_rad`] sur quatre points.
+    /// [`Tmerc::forward_rad`] sur `N` points.
     #[inline(always)]
     #[expect(
         clippy::similar_names,
         reason = "Cn and Ce are the paired terms of PROJ exact_e_fwd"
     )]
-    pub(super) fn forward_rad(t: &Tmerc, tok: Token, lon_r: V4, lat_r: V4) -> Option<(V4, V4)> {
-        let k = |value| V4::splat(tok, value);
+    pub(super) fn forward_rad<V: Vector<N>, const N: usize>(
+        t: &Tmerc,
+        tok: V::Token,
+        lon_r: V,
+        lat_r: V,
+    ) -> Option<(V, V)> {
+        let k = |value| V::splat(tok, value);
         if !kernels::latitude_in_domain(tok, lat_r)
             .and(lon_r.is_finite())
             .all()
@@ -184,20 +200,22 @@ mod vector {
         let east = k(t.a).mul_add(k(t.qn) * ce, k(t.x0));
         let north = k(t.a).mul_add(k(t.qn).mul_add(cn, k(t.zb)), k(t.y0));
         let nan = k(f64::NAN);
-        Some((
-            V4::select(inside, east, nan),
-            V4::select(inside, north, nan),
-        ))
+        Some((V::select(inside, east, nan), V::select(inside, north, nan)))
     }
 
-    /// [`Tmerc::inverse`] sur quatre points.
+    /// [`Tmerc::inverse`] sur `N` points.
     #[inline(always)]
     #[expect(
         clippy::similar_names,
         reason = "Cn and Ce are the paired terms in PROJ exact_e_inv"
     )]
-    pub(super) fn inverse(t: &Tmerc, tok: Token, east: V4, north: V4) -> Option<(V4, V4)> {
-        let k = |value| V4::splat(tok, value);
+    pub(super) fn inverse<V: Vector<N>, const N: usize>(
+        t: &Tmerc,
+        tok: V::Token,
+        east: V,
+        north: V,
+    ) -> Option<(V, V)> {
+        let k = |value| V::splat(tok, value);
         let x = (east - k(t.x0)) * k(t.ra);
         let y = (north - k(t.y0)) * k(t.ra);
         let mut cn = (y - k(t.zb)) / k(t.qn);

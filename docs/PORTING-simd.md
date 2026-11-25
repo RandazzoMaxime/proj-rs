@@ -1,4 +1,4 @@
-# Calcul par lots en AVX2 et en NEON (`src/simd/`)
+# Calcul par lots en AVX2, AVX-512 et NEON (`src/simd/`
 
 PROJ 9.9.0 n'a pas de chemin vectoriel : `pj_fwd` et `pj_inv` convertissent un point à la fois
 (`proj_trans_generic` boucle). Ce module est donc un ajout de la crate, pas un portage. La
@@ -8,21 +8,24 @@ référence des valeurs reste PROJ : `tests/simd_batch.rs` compare chaque lot à
 
 ```
 src/simd/
+  vec.rs      Vector<N> (le contrat, N voies), Mask, SimdToken (jeton + vectorize)
   mod.rs      Lanes (le contrat d'un noyau), run (le driver), batch_path
   v4.rs       x86-64 : Avx2 (preuve de support), V4 (quatre f64), Mask
+  v8.rs       x86-64, feature `avx512` : Avx512, V8 (huit f64), Mask
   neon.rs     aarch64 : Neon (preuve de support), V4 (deux registres de deux f64), Mask
-  math.rs     sin_cos tan exp log atanh asinh sinh atan atan2 hypot powf sur V4, en Rust
+  math.rs     sin_cos tan exp log atanh asinh sinh atan atan2 hypot powf, en Rust, sur Vector<N>
   kernels.rs  briques partagées : adjlon, tsfn, phi2, latitude_in_domain
-  drive.rs    la boucle par groupes de quatre (sur x86-64, le seul code compilé avec avx2,fma)
+  drive.rs    la boucle par groupes de N (sur x86-64, le seul code compilé avec les extensions du jeton)
 src/tmerc/batch.rs   Transverse Mercator : forward, inverse
 src/lcc/batch.rs     Lambert conique conforme : forward, inverse
 src/merc/batch.rs    Mercator, sphère et ellipsoïde : forward, inverse
 ```
 
-Une projection écrit sa formule contre l'API sûre de `V4` (opérateurs, `select`, `sin`, …). Elle
-n'écrit ni intrinsèque, ni `unsafe`, ni détection du processeur. Pour ajouter une projection :
-implémenter `Lanes` (`point` : le chemin scalaire ; `lanes` : quatre points, ou `None`), puis
-appeler `simd::run` depuis `forward_batch` / `inverse_batch`.
+Une projection écrit sa formule contre l'API sûre de `Vector<N>`, générique sur le nombre de
+voies (opérateurs, `select`, `sin`, …). Elle n'écrit ni intrinsèque, ni `unsafe`, ni détection du
+processeur. Pour ajouter une projection : implémenter `Lanes` (`point` : le chemin scalaire ;
+`lanes` : `N` points, ou `None`), puis appeler `simd::run` depuis `forward_batch` /
+`inverse_batch`. La formule tourne telle quelle sur AVX2 (4 voies), AVX-512 (8 voies) et NEON.
 
 ### Le modèle de sûreté
 
@@ -35,7 +38,7 @@ appeler `simd::run` depuis `forward_batch` / `inverse_batch`.
   `[f64; 4]` et `__m256d`. Le dépôt n'a aucun `unsafe` ici : c'est `pulp` qui le porte.
 - Le débit dépend d'une autre condition, qui n'est pas de sûreté : le code doit être inséré
   dans une fonction compilée avec ces extensions. C'est `V3::vectorize`, appelé par
-  `drive::run_avx2` et `run3_avx2` avec une structure (`Groups`, `Groups3`) dont la méthode
+  `drive::run_simd` et `run3_simd` avec une structure (`Groups`, `Groups3`) dont la méthode
   `call` est `#[inline(always)]`. Les méthodes de `V4` et les noyaux sont `#[inline(always)]`.
   Hors de cette fonction le code reste correct, mais les intrinsèques ne sont plus en ligne.
 - Il n'y a ni `asm!` ni appel à la bibliothèque C : les fonctions mathématiques de `math.rs` sont du
@@ -56,13 +59,14 @@ Avant le lot du module, chaque projection portait ses intrinsèques et sa détec
 
 ### Le driver et le repli
 
-`run` découpe les tranches par groupes de quatre. Pour chaque groupe, `Lanes::lanes` rend les
-quatre résultats, ou `None` quand une voie sort du domaine que le noyau vectoriel traite
+`run` découpe les tranches par groupes de `N` voies (8 en AVX-512, 4 en AVX2/NEON). Pour chaque groupe, `Lanes::lanes` rend les
+`N` résultats, ou `None` quand une voie sort du domaine que le noyau vectoriel traite
 (valeur non finie, latitude hors de ±90°, pôle d'un cône, `rho` nul, `|Ce|` au-delà de la limite
 de Transverse Mercator, latitude non finie à l'inverse d'un cône). Le groupe passe alors par
-`Lanes::point`, le chemin scalaire : ses quatre points valent ceux de `forward` et `inverse` **au
-bit près**, et un point refusé est écrit `NaN`. La queue (moins de quatre points) passe aussi par
-`point`. Sans AVX2, ou hors x86-64, `run` boucle sur `point` : les résultats sont ceux du chemin
+`Lanes::point`, le chemin scalaire : ses points valent ceux de `forward` et `inverse` **au
+bit près**, et un point refusé est écrit `NaN`. La queue (moins de `N` points) passe aussi par
+`point`. Sans le jeu d
+instructions, ou hors x86-64/aarch64, `run` boucle sur `point` : les résultats sont ceux du chemin
 scalaire.
 
 ## Précision
@@ -346,7 +350,7 @@ ces extensions l'est toujours. Les deux passent maintenant par `pulp` 0.22.3 (MI
 
 ## NEON (aarch64)
 
-Sur aarch64 le lot tourne par groupes de quatre, comme avec AVX2. `V4` a deux réalisations, que
+Sur aarch64 le lot tourne par groupes de quatre, comme AVX2 sur x86-64 (huit avec AVX-512). `V4` a deux réalisations, que
 `mod.rs` choisit par l'architecture : `v4.rs`, un registre `__m256d`, et `neon.rs`, deux
 `float64x2_t` (les voies 0 et 1, puis 2 et 3). Elles ont la même API : le driver, `kernels.rs`,
 `math.rs` et les formules des projections sont les mêmes pour les deux. Le jeton de preuve
@@ -414,6 +418,48 @@ puis par la CI sur Apple silicon et sur Linux ARM :
 Ce qui reste connu : `fmath::tests::matches_the_c_libm_bit_for_bit` échoue sous `qemu` sur Linux
 aarch64, avec et sans le chemin NEON. Il compare l'`atanh` de `fmath` à celui de la libm de la
 cible.
+
+## AVX-512 (x86-64, feature `avx512`)
+
+`v8.rs` ajoute une troisième réalisation de `Vector`, à huit voies dans un registre `__m512d`, derrière
+la feature cargo `avx512` (off par défaut, relayée par `proj-rs-georust`). Le jeton est
+`pulp::x86::V4` (`V4::try_new` : le niveau x86-64-v4, AVX512F/BW/CD/DQ/VL plus le niveau v3), et
+les intrinsèques passent par les méthodes sûres de `pulp` comme pour AVX2 : pas de `unsafe` dans
+le dépôt. `batch_path()` rend `avx512` quand le processeur l'a et la feature est compilée, sinon
+`avx2` ; `run` essaie AVX-512 d'abord, puis AVX2, puis NEON, puis le scalaire.
+
+La feature est off par défaut pour le plancher 1.83 : les types AVX-512 de `std::arch` sont
+stables depuis Rust 1.89, et la feature `x86-v4` de `pulp` ne compile pas sous 1.83. Le job
+`msrv` de la CI liste donc les features explicitement, sans `avx512`. Construire avec
+`--features avx512` exige Rust >= 1.89.
+
+Chaque opération rend les bits de son homologue AVX2 voie par voie (IEEE 754, FMA fusionné) ;
+seuls les masques diffèrent de forme (registres de bits `__mmask8` : `vblendmpd`, `vpmovq2m`,
+les comparaisons rendent le masque directement) et `round`/`floor` passent par `vrndscalepd`
+(arrondi exact). Aux empreintes de `math.rs`, 9 fonctions sur 11 rendent les mêmes bits qu'à
+4 voies ; `asinh` et `atanh` ont une branche « toutes les voies petites » dont le résultat dépend
+de la composition du groupe, donc du nombre de voies (les deux restent dans les bornes d'ULP du
+test d'exactitude).
+
+### Mesures AVX-512 contre AVX2
+
+Xeon 6985P-C (Emerald Rapids), `proj-rs-bench`, un million de points par cas, ns/point, petit
+des deux passages : les lots par noyau vectoriel gagnent 1,1× à 1,8×, les appels point par point
+ne changent pas.
+
+| cas | AVX2 (4 voies) | AVX-512 (8 voies) | gain |
+|---|---:|---:|---:|
+| UTM 31 aller (lot) | 19,3 | 10,8 | 1,8× |
+| UTM 31 retour (lot) | 23,7 | 14,3 | 1,7× |
+| Lambert-93 aller (lot) | 18,8 | 11,3 | 1,7× |
+| Lambert-93 retour (lot) | 45,4 | 31,1 | 1,5× |
+| Web Mercator aller (lot) | 11,6 | 7,8 | 1,5× |
+| Web Mercator retour (lot) | 9,0 | 5,7 | 1,6× |
+| `convert_array` 4326 → 32631 | 26,6 | 20,1 | 1,3× |
+| `convert_array` 4326 → 2154 | 27,7 | 24,8 | 1,1× |
+| `convert_array` 4326 → 3857 | 19,9 | 16,1 | 1,2× |
+| Helmert 7 (lot) | 9,0 | 8,9 | 1,0× |
+| UTM 31 aller (point par point) | 76,1 | 75,8 | 1,0× |
 
 ## Mesures
 
