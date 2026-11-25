@@ -21,6 +21,8 @@ geo-types = ["proj-rs/geo-types"]
 # default, as in `proj`). The grid reader is always built in and no libproj is linked,
 # so the others only keep the `features = [..]` list of an existing manifest valid.
 network = ["proj-rs/network"]
+# The AVX-512 batch path of proj-rs on x86-64 (Rust >= 1.89; see proj-rs's `avx512` feature).
+avx512 = ["proj-rs/avx512"]
 tiff = []
 bundled_proj = []
 pkg_config = []

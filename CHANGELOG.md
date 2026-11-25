@@ -11,6 +11,21 @@ rest is outside semver.
   faster. The embedded database is stored compressed, page by page (`data/proj.pages`): the binary
   is 7.6 MB smaller, creation takes about 9 ms more once per process, the conversions do not change.
   See [docs/PORTING-memory.md](docs/PORTING-memory.md).
+- x86-64 has an AVX-512 batch path (8 lanes of `f64`, `src/simd/v8.rs`) behind the new `avx512`
+  cargo feature (off by default; also relayed by `proj-rs-georust`). On an AVX-512 CPU,
+  `batch_path()` gives `avx512` and every batch kernel runs 8 points at a time: Transverse
+  Mercator/UTM, Lambert conic, Mercator/Web Mercator, `laea`, `somerc`, `sterea`, `cart` and
+  Helmert, forward and inverse. The code is generic over the lane count (`Vector<N>` in
+  `src/simd/vec.rs`), so one formula runs on AVX2 (4 lanes), AVX-512 (8) and NEON with the same
+  bits per lane; only `asinh`/`atanh` differ between 4 and 8 lanes (their "all lanes small"
+  branch depends on the group), within the same ULP bounds. The feature needs Rust >= 1.89 (the
+  AVX-512 types of `std::arch`; `pulp/x86-v4` does not build below), so the MSRV (1.83) build
+  never enables it and the CI `msrv` job lists the features explicitly without `avx512`. Measured
+  on a Xeon 6985P-C with `proj-rs-bench`: batch conversions are 1.1x to 1.8x faster than the AVX2
+  path (e.g. UTM 31 forward batch 19.3 -> 10.8 ns/point), one-point calls unchanged. Tests:
+  digests per path in `src/simd/math.rs` and `tests/simd_bits.rs`/`tests/convert_array_golden.rs`
+  (a `GOLDEN_AVX512` table), batch-vs-scalar in `tests/simd_batch.rs` over all lane positions of
+  a group. See [docs/PORTING-simd.md](docs/PORTING-simd.md).
 
 ## 1.2.5
 

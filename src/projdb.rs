@@ -14,6 +14,15 @@ const PROJ_PAGES: &[u8] = include_bytes!("../data/proj.pages");
 /// schema, about 2.7 MiB of heap for a read. A writable copy replays them (`tools/proj-db`).
 const PROJ_TRIGGERS: &str = include_str!("../data/proj-triggers.sql");
 
+/// The `CREATE TRIGGER` statements left out of the embedded image, each ending in `;`, in the
+/// order of `proj.db`.
+pub(crate) fn trigger_statements() -> impl Iterator<Item = &'static str> {
+    PROJ_TRIGGERS
+        .split_inclusive("END;\n")
+        .map(str::trim)
+        .filter(|statement| !statement.is_empty())
+}
+
 /// Opening the embedded database failed, or a query did.
 #[derive(Debug)]
 pub(crate) enum DbFail {

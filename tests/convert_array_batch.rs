@@ -5,7 +5,7 @@
 //! - the values agree to the tolerance of the vector kernels (`docs/PORTING-simd.md`), and with
 //!   the PROJ 9.9.0 `cs2cs`, which is the reference;
 //! - a failing point gives the error `convert` gives for it, the first failing point's when
-//!   several fail. The slice is then partly converted: whole blocks of 4096 points before the
+//!   several fail. The slice is then partly converted: whole blocks of 1024 points before the
 //!   first failing one are converted, and the rest keeps its input (`docs/PORTING-memory.md`).
 
 use proj_rs::{Proj, ProjError};
@@ -319,6 +319,9 @@ fn message(error: &ProjError) -> String {
     error.to_string()
 }
 
+/// Points `convert_array` hands to the transform at a time (`FILL_CHUNK` of `src/proj.rs`).
+const BLOCK: usize = 1_024;
+
 #[test]
 fn a_failing_point_gives_the_error_of_convert_and_converts_whole_blocks_before_it() {
     let proj = Proj::new_known_crs("EPSG:4326", "EPSG:2154", None).expect("pair");
@@ -328,7 +331,7 @@ fn a_failing_point_gives_the_error_of_convert_and_converts_whole_blocks_before_i
     for (index, &point) in bad.iter().enumerate() {
         let want = message(&proj.convert(point).expect_err("convert refuses it"));
         // At the start, in the middle of a lane group, in a later block, and at the end.
-        for position in [0, 5, 4_095, 4_096, 4_099, 9_999] {
+        for position in [0, 5, 1_023, 1_024, 1_027, 4_096, 9_999] {
             let mut points = france(10_000);
             points[position] = point;
             let before = bits(&points);
@@ -338,7 +341,7 @@ fn a_failing_point_gives_the_error_of_convert_and_converts_whole_blocks_before_i
             assert_eq!(message(&error), want, "bad point {index} at {position}");
             let after = bits(&points);
             // The blocks before the failing one are converted, as `convert` converts them.
-            let done = position / 4_096 * 4_096;
+            let done = position / BLOCK * BLOCK;
             let mut original = france(10_000);
             original.truncate(done);
             let converted = one_by_one(&proj, &original);

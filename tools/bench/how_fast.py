@@ -29,8 +29,12 @@ MACHINE_NOTES = {
 PATH_NOTES = {
     "avx2": (
         "The batch kernels take the AVX2 path, which every x86-64 CPU has since 2013 (Intel) "
-        "and 2015 (AMD). An AVX-512 path, behind the opt-in `avx512` Cargo feature (PR #356), "
+        "and 2015 (AMD). An AVX-512 path, behind the opt-in `avx512` Cargo feature, "
         "is not in these numbers."
+    ),
+    "avx512": (
+        "The batch kernels take the AVX-512 path (8 lanes, the `avx512` feature), preferred over "
+        "AVX2 on CPUs that have it (x86-64-v4)."
     ),
     "neon": "The batch kernels take the NEON path, which every aarch64 CPU has.",
 }

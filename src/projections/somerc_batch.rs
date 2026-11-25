@@ -1,5 +1,5 @@
-//! `somerc` en quatre voies : [`Somerc::forward`] et [`Somerc::inverse`], opération par
-//! opération. Passe par le scalaire, pour un groupe de quatre : une valeur non finie, un argument
+//! `somerc` en `N` voies : [`Somerc::forward`] et [`Somerc::inverse`], opération par
+//! opération. Passe par le scalaire, pour un groupe de `N` : une valeur non finie, un argument
 //! d'`asin` près de ±1, un Newton qui ne converge pas en six tours.
 
 use super::Somerc;
@@ -11,27 +11,32 @@ mod vector {
 
     use super::{Somerc, UnitLanes};
     use crate::simd::kernels;
-    use crate::simd::{Token, V4};
+    use crate::simd::{Mask, Vector, VectorMath};
 
     /// `ln(tan(π/4 + φ/2))`, la latitude isométrique.
     #[inline(always)]
-    fn isometric(tok: Token, phi: V4) -> V4 {
-        (V4::splat(tok, FRAC_PI_4) + V4::splat(tok, 0.5) * phi)
+    fn isometric<V: Vector<N>, const N: usize>(tok: V::Token, phi: V) -> V {
+        (V::splat(tok, FRAC_PI_4) + V::splat(tok, 0.5) * phi)
             .tan()
             .log()
     }
 
     /// `ln((1 + sp) / (1 - sp))`.
     #[inline(always)]
-    fn log_ratio(tok: Token, sp: V4) -> V4 {
-        let one = V4::splat(tok, 1.0);
+    fn log_ratio<V: Vector<N>, const N: usize>(tok: V::Token, sp: V) -> V {
+        let one = V::splat(tok, 1.0);
         ((one + sp) / (one - sp)).log()
     }
 
     impl UnitLanes for Somerc {
         #[inline(always)]
-        fn forward_lanes(&self, tok: Token, lam: V4, phi: V4) -> Option<(V4, V4)> {
-            let k = |value| V4::splat(tok, value);
+        fn forward_lanes<V: Vector<N>, const N: usize>(
+            &self,
+            tok: V::Token,
+            lam: V,
+            phi: V,
+        ) -> Option<(V, V)> {
+            let k = |value| V::splat(tok, value);
             if !kernels::latitude_in_domain(tok, phi)
                 .and(lam.is_finite())
                 .all()
@@ -62,8 +67,13 @@ mod vector {
         }
 
         #[inline(always)]
-        fn inverse_lanes(&self, tok: Token, x: V4, y: V4) -> Option<(V4, V4)> {
-            let k = |value| V4::splat(tok, value);
+        fn inverse_lanes<V: Vector<N>, const N: usize>(
+            &self,
+            tok: V::Token,
+            x: V,
+            y: V,
+        ) -> Option<(V, V)> {
+            let k = |value| V::splat(tok, value);
             let phipp = k(2.0) * ((y / k(self.kr)).exp().atan() - k(FRAC_PI_4));
             let lampp = x / k(self.kr);
             let (sin_phipp, cp) = phipp.sin_cos();
@@ -90,7 +100,7 @@ mod vector {
                     * (k(1.0) - esp * esp)
                     * cos_phip
                     * k(self.rone_es);
-                phip = V4::select(done, phip, phip - delp);
+                phip = V::select(done, phip, phip - delp);
                 done = done.or(delp.abs().lt(k(1e-10)));
                 if done.all() {
                     break;

@@ -192,20 +192,27 @@ pub mod wkt {
 /// Path taken by the batch conversions (`forward_batch` and `inverse_batch` of [`Tmerc`],
 /// [`Lcc`] and [`Mercator`]) on this host.
 ///
-/// `avx2` is the vector path on x86-64 with AVX2 and FMA, and `neon` the one on aarch64, with this
-/// crate's own vector math functions (no libmvec, no Accelerate, no C library calls) on every
-/// platform. The two give the same bits. `portable` is the path elsewhere:
-/// [`Tmerc::forward_batch`] runs a 4-lane Rust loop, bit-identical to the scalar path; the other
-/// batch functions run the one-point loop (`docs/PORTING-batch-path.md`).
+/// `avx512` is the vector path on x86-64 with AVX-512 (the `avx512` feature of this crate), `avx2`
+/// the one on x86-64 with AVX2 and FMA, and `neon` the one on aarch64, with this crate's own vector
+/// math functions (no libmvec, no Accelerate, no C library calls) on every platform. The 4-lane
+/// paths give the same bits. `portable` is the path elsewhere: [`Tmerc::forward_batch`] runs a
+/// 4-lane Rust loop, bit-identical to the scalar path; the other batch functions run the one-point
+/// loop (`docs/PORTING-batch-path.md`).
 #[doc(hidden)]
 #[must_use]
 pub fn batch_path() -> &'static str {
     match simd::batch_path() {
+        "avx512" => "avx512",
         "avx2" => "avx2",
         "neon" => "neon",
         _ => "portable",
     }
 }
+
+/// Whether the AVX-512 batch path (8 lanes) is compiled in: the `avx512` feature on x86-64.
+/// It needs the AVX-512 types of `std::arch`, stable since Rust 1.89.
+#[doc(hidden)]
+pub const AVX512_COMPILED: bool = cfg!(all(target_arch = "x86_64", feature = "avx512"));
 
 /// Version du crate, alignée sur `Cargo.toml`.
 #[doc(hidden)]

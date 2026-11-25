@@ -51,7 +51,7 @@ place, avec un emplacement `Option<TransformError>` par point :
 | `Pipeline` | étape par étape sur toute la tranche, pour que `Classic` voie tous les points ; `push` et `pop` aussi (`BatchStack`) quand leurs paires s'apparient, sinon point par point (`docs/PORTING-batch-datum.md`) |
 | `Classic` | par blocs de 256 points : `fwd_prepare` en scalaire (porte de latitude, `pm=`, `lon_0`, `adjlon`, latitude géocentrique), le noyau vectoriel à origine nulle (`ProjectedBatch`), puis `fwd_finalize` en scalaire (`a`, faux est et nord, unités) ; un point que le noyau refuse (`NaN`), ou une entrée `NaN`, repasse par le scalaire ; pas de vecteur sous `+over` (`projections/classic_batch.rs`) |
 | `IsoPipeline::map_batch` | une opération unique : la tranche d'un bloc, entre les deux échanges d'axes de la façade ; plusieurs candidats : un point à la fois (`proj_trans` choisit par point) |
-| `Proj::fill_array` | des blocs de 4096 points ; le premier point en échec du premier bloc en échec rend son erreur |
+| `Proj::fill_array` | des blocs de 1024 points ; le premier point en échec du premier bloc en échec rend son erreur |
 
 Les projections qui ont un noyau vectoriel : Transverse Mercator exact (donc `+proj=utm` et
 `+proj=tmerc` par défaut), Lambert conique conforme, Mercator sans `+over`, `+proj=sterea`,
@@ -78,7 +78,7 @@ donne `NaN` comme `convert`, sans erreur, comme PROJ (`a_nan_point_gives_what_co
 - `convert_array` et `project_array` s'accordent avec `convert` et `project` à 1e-8 m près pour une
   projection qui a un noyau vectoriel (11 nm au plus mesuré, `docs/PORTING-simd.md`), aux mêmes
   bits sinon. Les tests prennent 1e-7 m et 1e-11°.
-- Un point en échec arrête l'appel à la fin de son bloc de 4096 points, pas à la fin de la tranche
+- Un point en échec arrête l'appel à la fin de son bloc de 1024 points, pas à la fin de la tranche
   ni au point lui-même. Les points du bloc après le point en échec sont donc transformés : cela
   compte pour un téléchargement de grille ou le choix d'un candidat (`last_used_operation`). Avant,
   l'appel s'arrêtait au point. La tranche reste inchangée, et l'erreur est celle du premier point

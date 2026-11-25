@@ -1,12 +1,12 @@
-//! Mercator par lots, quatre points à la fois, sphère et ellipsoïde.
+//! Mercator par lots, `N` points à la fois, sphère et ellipsoïde.
 //!
 //! Les formules sont celles de [`Mercator::fwd_unit`] et [`Mercator::inv_unit`], écrites contre
-//! [`crate::simd::V4`]. Un groupe de quatre qu'une voie sort du domaine du noyau (valeur non
+//! [`V`]. Un groupe de `N` qu'une voie sort du domaine du noyau (valeur non
 //! finie, latitude hors de ±90°) passe par le chemin scalaire : ses points valent exactement
 //! ceux de [`Mercator::forward`] et [`Mercator::inverse`].
 
 use super::Mercator;
-use crate::simd::Lanes;
+use crate::simd::{Lanes, Vector};
 
 /// `forward` en lot : degrés vers mètres.
 pub(super) struct Forward<'a>(pub(super) &'a Mercator);
@@ -29,12 +29,12 @@ impl Lanes for Forward<'_> {
 
     #[cfg(simd_lanes)]
     #[inline(always)]
-    fn lanes(
+    fn lanes<V: Vector<N>, const N: usize>(
         &self,
-        tok: crate::simd::Token,
-        lon_deg: crate::simd::V4,
-        lat_deg: crate::simd::V4,
-    ) -> Option<(crate::simd::V4, crate::simd::V4)> {
+        tok: V::Token,
+        lon_deg: V,
+        lat_deg: V,
+    ) -> Option<(V, V)> {
         vector::forward(self.0, tok, lon_deg, lat_deg)
     }
 }
@@ -48,12 +48,12 @@ impl Lanes for ForwardRad<'_> {
 
     #[cfg(simd_lanes)]
     #[inline(always)]
-    fn lanes(
+    fn lanes<V: Vector<N>, const N: usize>(
         &self,
-        tok: crate::simd::Token,
-        lon_rad: crate::simd::V4,
-        lat_rad: crate::simd::V4,
-    ) -> Option<(crate::simd::V4, crate::simd::V4)> {
+        tok: V::Token,
+        lon_rad: V,
+        lat_rad: V,
+    ) -> Option<(V, V)> {
         vector::forward_rad(self.0, tok, lon_rad, lat_rad)
     }
 }
@@ -67,12 +67,12 @@ impl Lanes for Inverse<'_> {
 
     #[cfg(simd_lanes)]
     #[inline(always)]
-    fn lanes(
+    fn lanes<V: Vector<N>, const N: usize>(
         &self,
-        tok: crate::simd::Token,
-        east: crate::simd::V4,
-        north: crate::simd::V4,
-    ) -> Option<(crate::simd::V4, crate::simd::V4)> {
+        tok: V::Token,
+        east: V,
+        north: V,
+    ) -> Option<(V, V)> {
         vector::inverse(self.0, tok, east, north)
     }
 }
@@ -84,12 +84,7 @@ impl Lanes for InverseUnit<'_> {
 
     #[cfg(simd_lanes)]
     #[inline(always)]
-    fn lanes(
-        &self,
-        tok: crate::simd::Token,
-        x: crate::simd::V4,
-        y: crate::simd::V4,
-    ) -> Option<(crate::simd::V4, crate::simd::V4)> {
+    fn lanes<V: Vector<N>, const N: usize>(&self, tok: V::Token, x: V, y: V) -> Option<(V, V)> {
         vector::inverse_unit(self.0, tok, x, y)
     }
 }
@@ -101,19 +96,29 @@ mod vector {
     use super::Mercator;
     use crate::merc::Model;
     use crate::simd::kernels::{self, DEG_TO_RAD, RAD_TO_DEG};
-    use crate::simd::{Token, V4};
+    use crate::simd::{Mask, Vector, VectorMath};
 
-    /// [`Mercator::forward`] sur quatre points.
+    /// [`Mercator::forward`] sur `N` points.
     #[inline(always)]
-    pub(super) fn forward(m: &Mercator, tok: Token, lon_deg: V4, lat_deg: V4) -> Option<(V4, V4)> {
-        let k = |value| V4::splat(tok, value);
+    pub(super) fn forward<V: Vector<N>, const N: usize>(
+        m: &Mercator,
+        tok: V::Token,
+        lon_deg: V,
+        lat_deg: V,
+    ) -> Option<(V, V)> {
+        let k = |value| V::splat(tok, value);
         forward_rad(m, tok, lon_deg * k(DEG_TO_RAD), lat_deg * k(DEG_TO_RAD))
     }
 
-    /// [`Mercator::forward_rad`] sur quatre points.
+    /// [`Mercator::forward_rad`] sur `N` points.
     #[inline(always)]
-    pub(super) fn forward_rad(m: &Mercator, tok: Token, lon_r: V4, lat_r: V4) -> Option<(V4, V4)> {
-        let k = |value| V4::splat(tok, value);
+    pub(super) fn forward_rad<V: Vector<N>, const N: usize>(
+        m: &Mercator,
+        tok: V::Token,
+        lon_r: V,
+        lat_r: V,
+    ) -> Option<(V, V)> {
+        let k = |value| V::splat(tok, value);
         if !kernels::latitude_in_domain(tok, lat_r)
             .and(lon_r.is_finite())
             .all()
@@ -135,25 +140,35 @@ mod vector {
         let valid = x.is_finite().and(y.is_finite());
         let nan = k(f64::NAN);
         Some((
-            V4::select(valid, k(m.a).mul_add(x, k(m.x0)), nan),
-            V4::select(valid, k(m.a).mul_add(y, k(m.y0)), nan),
+            V::select(valid, k(m.a).mul_add(x, k(m.x0)), nan),
+            V::select(valid, k(m.a).mul_add(y, k(m.y0)), nan),
         ))
     }
 
-    /// [`Mercator::inverse`] sur quatre points.
+    /// [`Mercator::inverse`] sur `N` points.
     #[inline(always)]
-    pub(super) fn inverse(m: &Mercator, tok: Token, east: V4, north: V4) -> Option<(V4, V4)> {
-        let k = |value| V4::splat(tok, value);
+    pub(super) fn inverse<V: Vector<N>, const N: usize>(
+        m: &Mercator,
+        tok: V::Token,
+        east: V,
+        north: V,
+    ) -> Option<(V, V)> {
+        let k = |value| V::splat(tok, value);
         let (x, y) = ((east - k(m.x0)) / k(m.a), (north - k(m.y0)) / k(m.a));
         let (lam, phi) = inverse_unit(m, tok, x, y)?;
         let lon = kernels::adjlon(tok, lam + k(m.lam0));
         Some((lon * k(RAD_TO_DEG), phi * k(RAD_TO_DEG)))
     }
 
-    /// [`Mercator::inv_unit`] sur quatre points : lam et phi en radians, lam non ramenée.
+    /// [`Mercator::inv_unit`] sur `N` points : lam et phi en radians, lam non ramenée.
     #[inline(always)]
-    pub(super) fn inverse_unit(m: &Mercator, tok: Token, x: V4, y: V4) -> Option<(V4, V4)> {
-        let k = |value| V4::splat(tok, value);
+    pub(super) fn inverse_unit<V: Vector<N>, const N: usize>(
+        m: &Mercator,
+        tok: V::Token,
+        x: V,
+        y: V,
+    ) -> Option<(V, V)> {
+        let k = |value| V::splat(tok, value);
         if !x.is_finite().and(y.is_finite()).all() {
             return None;
         }
