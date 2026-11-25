@@ -335,6 +335,7 @@ name = "proj-rs"
 version = "1.2.5"
 dependencies = [
  "cc",
+ "miniz_oxide",
  "native-tls",
  "pulp",
  "rusqlite",
