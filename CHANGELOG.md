@@ -6,6 +6,12 @@ rest is outside semver.
 
 ## Unreleased
 
+- `+datum=` no longer hides `+R`, `+a`, `+b`, `+rf`, `+f`, `+e`, `+es` or an earlier `+ellps`.
+  As in `pj_datum_set`, the datum's `ellps=` is appended at the end of the list, so an earlier
+  `+ellps` wins and the size and shape keys override it: `+proj=merc +datum=WGS84 +R=6370000`
+  is a sphere again (it was WGS 84, 23 km off at 45°N), and `+datum=WGS84 +a=6378137 +b=6356752.314`
+  is the `unknown` datum PROJ 9.9.0 builds from the numbers, the SRS GMT writes for its grids
+  (`grdproject/units`). Tests: `tests/datum_ellipsoid_override.rs`.
 - GMT 6.5.0 runs as a tenth real client (`tools/clients/gmt.sh`, `docs/CLIENTS-gmt.md`): its 1180
   test scripts run once with the libproj of PROJ 9.9.0 and once with proj-rs. GMT reaches libproj
   through GDAL alone (`-J+proj=...` becomes an `OGRCreateCoordinateTransformation`, GeoTIFF and
