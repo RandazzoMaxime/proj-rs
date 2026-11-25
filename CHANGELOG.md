@@ -6,6 +6,20 @@ rest is outside semver.
 
 ## Unreleased
 
+- GMT 6.5.0 runs as a tenth real client (`tools/clients/gmt.sh`, `docs/CLIENTS-gmt.md`): its 1180
+  test scripts run once with the libproj of PROJ 9.9.0 and once with proj-rs. GMT reaches libproj
+  through GDAL alone (`-J+proj=...` becomes an `OGRCreateCoordinateTransformation`, GeoTIFF and
+  JPEG 2000 SRS, the SRS of the grids it writes). Each pass proves the library it loads (`ldd`, no
+  `DT_RPATH`, `LD_DEBUG=libs` on a real `gmt mapproject -J+proj=...`, and the interposer
+  `tools/clients/proj_count.c`, which logs the libproj of every process: 16914 and 16918 of them,
+  all on the expected file) and counts the calls into libproj (270 `proj_create`, 173
+  `proj_create_from_wkt`, 28415 `proj_trans` in 29 tests). Run on Linux x86-64, 4 vCPU, GDAL 3.8.4
+  of Ubuntu 24.04, with the network, 80 minutes: the 1180 verdicts agree, 4673 files compared,
+  and one real difference, a defect of proj-rs that is documented and not fixed here:
+  `+datum=WGS84` with `+a`/`+b` (or `+rf`) keeps the named datum where PROJ 9.9.0 builds an
+  `unknown` ellipsoid from the numbers (`grdproject/units`, reproduced with `projinfo -o
+  WKT1_GDAL "+proj=longlat +a=6378137 +b=6356752.314 +datum=WGS84 +type=crs"`). 18 files differ
+  between two runs with the same library (GMT is not deterministic there) and are listed apart.
 - R 4.5.0 with sf 1.1-3, terra 1.9-60 and lwgeom 0.2-17 runs as an eleventh real client
   (`tools/clients/r.sh`, `docs/CLIENTS-r.md`): the 25 test scripts of sf and terra's tinytest
   suite run once with the libproj of PROJ 9.9.0 and once with proj-rs, the dependencies pinned
@@ -39,12 +53,6 @@ rest is outside semver.
     NULL with nothing logged for a wrong type where PROJ logs nothing, and PROJ's own text
     otherwise (`vert_crs is not a VerticalCRS`, `source_crs is not a CRS or a
     CoordinateMetadata`...).
-- GMT 6.5.0 runs as a tenth real client (`tools/clients/gmt.sh`, `docs/CLIENTS-gmt.md`): its 1180
-  test scripts run once with the libproj of PROJ 9.9.0 and once with proj-rs. GMT reaches libproj
-  through GDAL alone (`-J+proj=...` becomes an `OGRCreateCoordinateTransformation`, GeoTIFF SRS,
-  raster extents); the two passes give the same verdict for each test and 0 file that differs out
-  of the 3894 written, the ~1000 PostScript compared rendered at the RMS limit of GMT's own
-  harness.
 - Memory: the read-only `proj.db` embedded in proj-rs has no triggers (`data/proj-triggers.sql` holds
   them and writable copies replay them). Creating a transform peaks at about 2.5 MiB less, and starts
   faster. The embedded database is stored compressed, page by page (`data/proj.pages`): the binary
