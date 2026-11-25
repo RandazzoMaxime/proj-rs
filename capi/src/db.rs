@@ -144,6 +144,8 @@ pub extern "C" fn proj_context_set_database_path(
         context.engine.set_database(database_source(requested));
         context.engine.set_auxiliary_database_paths(auxiliary);
         context.database = None;
+        // The `projCppContext` is made again, with a new `DatabaseContext` (c_api.cpp:372-390).
+        context.builder.reset_grid_records();
         if context.database().is_some() {
             return 1;
         }

@@ -66,26 +66,16 @@ pub(crate) fn read(name: &str) -> Option<Vec<u8>> {
     crate::network::fetch_missing(name)
 }
 
-/// The file is on disk, or the network opens it: the answer of the endpoint decides, as in
-/// `resolveFullFilename` (`factory.cpp:3441-3450`), where PROJ opens the grid and takes the
-/// availability from the open. A PROJ built without libcurl answers
-/// `Network functionality not available` on every open, and such a grid stays unavailable —
-/// in the sort of the candidates as anywhere else. A remote open that answers comes with
-/// its first chunk in the cache, as the download that follows would.
-pub(crate) fn available(name: &str) -> bool {
-    resolve(name).is_some() || crate::network::open_remote_grid(name).is_some()
-}
-
 /// On disk, or, the network on, a grid the endpoint would serve ([`crate::network::decide_download`]):
-/// [`available`] without the open attempt. `proj_create_crs_to_crs` with the network on asks for
+/// without an open attempt. `proj_create_crs_to_crs` with the network on asks for
 /// `PROJ_GRID_AVAILABILITY_KNOWN_AVAILABLE` (`crs_to_crs.cpp:572-576`), and `isPROJInstantiable`
 /// (`singleoperation.cpp:339-356`) reads its grids through `gridsNeeded(db,
 /// considerKnownGridsAsAvailable)` with the network state as the flag (`c_api.cpp:7918-7929`):
 /// `lookForGridInfo` (`factory.cpp:3496-3510`) then answers that a grid with a package or an
 /// open-license URL is available with the network temporarily off. The open attempt comes only
 /// when the grid is read, at transformation time. Every building of a pair, of a pipeline and of
-/// an instantiability mark goes through this one; only the sort of `proj_create_operations` under
-/// `USED_FOR_SORTING` opens (`available`).
+/// an instantiability mark goes through this one; only the lookups of `lookForGridInfo` open
+/// (`DatabaseContext::look_for_grid`).
 pub(crate) fn known_available(name: &str) -> bool {
     resolve(name).is_some() || crate::network::decide_download(name).is_some()
 }

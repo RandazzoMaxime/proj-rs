@@ -254,12 +254,18 @@ impl Transformation {
         if names.is_empty() {
             return Ok(false);
         }
+        // `gridsNeeded` looks every grid up, through the records of the context, before the
+        // descriptions are read.
+        let mut known = true;
         for name in names {
-            if !db.grid_is_known(name)? {
-                return Ok(false);
-            }
+            let grid = db
+                .grid_lookup(name, super::factory::GridAvailabilityUse::KnownAvailable)?
+                .info;
+            known &= !grid.package_name.is_empty()
+                || (!grid.url.is_empty() && grid.open_license)
+                || grid.available;
         }
-        Ok(true)
+        Ok(known)
     }
 }
 

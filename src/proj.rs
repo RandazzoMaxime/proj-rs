@@ -27,7 +27,7 @@ use crate::gie_api::Factors;
 use crate::iso19111::{
     Ballpark, CandidateFilter, Conversion, CoordinateOperation, CoordinateOperationContext,
     CoordinateOperationFactory, Crs, DatabaseContext, FactoryError, GridAvailabilityUse,
-    GridDescription, GridLookup, OpProps, Pipeline, ProjLines, ProjStringLayout, RemoteGrids,
+    GridDescription, GridLookup, OpProps, Pipeline, ProjLines, ProjStringLayout,
 };
 use crate::iso19111::{BestPolicy, FacadeRequest};
 use crate::proj_iso::{iso_pipeline_at, IsoPipeline};
@@ -824,15 +824,8 @@ impl Proj {
             } else {
                 GridAvailabilityUse::UseForSorting
             };
-            // The network is asked for a grid on no row, as `proj_coordoperation_get_grid_used`
-            // does with the network on (`lookForGridInfo`, `resolveFullFilename`).
-            let remote = if self.net.enabled {
-                RemoteGrids::Open
-            } else {
-                RemoteGrids::Skip
-            };
             operation
-                .grids_needed_with(&db, known, remote, &self.net.endpoint)
+                .grids_needed_with(&db, known, &self.net.endpoint)
                 .map_err(|error| ProjError::GridsNeeded(error.to_string()))
         })
     }
@@ -1591,6 +1584,20 @@ impl ProjBuilder {
     #[must_use]
     pub fn network_enabled(&self) -> bool {
         self.net.enabled
+    }
+
+    /// `body` run under this builder's network settings and grid records, as a C API call made
+    /// with its context: the grid lookups of `body` read the network state of the builder and
+    /// the records it keeps (PROJ's `lookForGridInfo` on the `DatabaseContext` of the context).
+    pub fn within<T>(&self, body: impl FnOnce() -> T) -> T {
+        crate::network::with_context(&self.net, body)
+    }
+
+    /// Forget the grid records of this builder and of its clones from now on: the builder starts
+    /// with a new record, as a PROJ context whose `DatabaseContext` is created again (a cloned
+    /// context, a database path set, `proj_cleanup`).
+    pub fn reset_grid_records(&mut self) {
+        self.net.reset_grid_info();
     }
 
     /// Grid download endpoint.

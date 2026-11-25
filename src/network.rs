@@ -274,6 +274,9 @@ pub(crate) struct GridContext {
     /// The built-in network functions of this context and its clones, with their chunks in
     /// memory: a new builder starts empty, as PROJ after `proj_cleanup`.
     builtin: Arc<OnceLock<Callbacks>>,
+    /// The grid records this context has looked up (`cacheGridInfo_`, [`crate::grid_info`]),
+    /// shared by its clones, as the `DatabaseContext` of a PROJ context is.
+    grid_info: Arc<crate::grid_info::GridInfoCache>,
     /// A hermetic context reads nothing from the machine: see [`GridContext::hermetic`].
     hermetic: bool,
 }
@@ -329,18 +332,45 @@ pub(crate) fn decide_download(name: &str) -> Option<Download> {
 /// functions: the chunks come from memory, then `cache.db`, then the network, as PROJ reads them.
 pub(crate) fn fetch_missing(name: &str) -> Option<Vec<u8>> {
     let download = decide_download(name)?;
+    look_up_before_open(name, &|renamed| {
+        if let Ok(db) = crate::iso19111::DatabaseContext::create() {
+            let _ignored = db.grid_lookup(
+                renamed,
+                crate::iso19111::GridAvailabilityUse::KnownAvailable,
+            );
+        }
+    });
     fetch_with_callbacks(&context().reading_callbacks()?, &download.url)
 }
 
-/// The URL of a grid that is not on disk and has no `proj.db` row, when the network can open it.
+/// The `lookForGridInfo(name, considerKnownGridsAsAvailable = true)` that
+/// `FileManager::open_resource_file` makes, the network off, before it opens a bare name on the
+/// network (`filemanager.cpp:1859-1879`): under the PROJ name of the grid when the name has no
+/// `.tif` and the database renames it (`filemanager.cpp:1802-1831`). A URL is opened without it.
+fn look_up_before_open(name: &str, look_up: &dyn Fn(&str)) {
+    if is_http(name) || is_explicit_path(name) {
+        return;
+    }
+    let renamed = if name.contains(".tif") {
+        None
+    } else {
+        proj_grid_filename(name)
+    };
+    let renamed = renamed.as_deref().unwrap_or(name);
+    crate::grid_info::with_network_off(|| look_up(renamed));
+}
+
+/// The URL of a grid that is not on disk, when the network can open it.
 ///
 /// PROJ's `FileManager::open_resource_file` opens `endpoint/name` (`filemanager.cpp`, 1859-1915),
-/// and `lookForGridInfo` gives that URL, and the grid as available, when the open succeeds
-/// (`factory.cpp`, the branch without a row). With callbacks only the first chunk is asked, as
-/// `open(url, 0, 16384)`. Without them the built-in client fetches the whole file, since it sends
-/// no `Range`. `None` when the network is off, the name is not a grid to fetch, or the open fails.
-pub(crate) fn open_remote_grid(name: &str) -> Option<String> {
+/// and `lookForGridInfo` gives that URL, and the grid as available, when the open succeeds.
+/// `look_up` is the lookup that precedes the open ([`look_up_before_open`]). With callbacks only
+/// the first chunk is asked, as `open(url, 0, 16384)`. Without them the built-in client fetches
+/// the whole file, since it sends no `Range`. `None` when the network is off, the name is not a
+/// grid to fetch, or the open fails.
+pub(crate) fn open_remote_grid_with(name: &str, look_up: &dyn Fn(&str)) -> Option<String> {
     let download = decide_download(name)?;
+    look_up_before_open(name, look_up);
     let callbacks = context().reading_callbacks()?;
     let mut file = crate::network_chunks::RemoteFile::new(&download.url, callbacks);
     let opened = match file.read_at(0, crate::network_chunks::CHUNK_SIZE) {
@@ -349,7 +379,6 @@ pub(crate) fn open_remote_grid(name: &str) -> Option<String> {
             // `NetworkFile::open` answers a failed open with `Cannot open <url>: <error>` on the
             // logger of the calling context (`networkfilemanager.cpp:1310-1328`), an answer of
             // `Network functionality not available` from a PROJ built without libcurl first.
-            // The sort of the candidates reads this availability, and GDAL counts the messages.
             not_opened(&download.url, &error);
             false
         }
@@ -444,9 +473,19 @@ pub(crate) fn find_file(name: &str) -> Option<PathBuf> {
 }
 
 pub(crate) fn context() -> GridContext {
-    ACTIVE
-        .with(|slot| slot.borrow().clone())
-        .unwrap_or_else(default_context)
+    suspended(
+        ACTIVE
+            .with(|slot| slot.borrow().clone())
+            .unwrap_or_else(default_context),
+    )
+}
+
+/// `ctx` with its network off while [`crate::grid_info::with_network_off`] runs.
+fn suspended(mut ctx: GridContext) -> GridContext {
+    if crate::grid_info::network_suspended() {
+        ctx.enabled = false;
+    }
+    ctx
 }
 
 fn default_context() -> GridContext {
@@ -458,9 +497,11 @@ fn default_context() -> GridContext {
 /// [`GridContext::load`]. A selection that runs under a context reads its settings here, so that
 /// a hermetic context does not take the variables of the process.
 pub(crate) fn active_or_environment() -> GridContext {
-    ACTIVE
-        .with(|slot| slot.borrow().clone())
-        .unwrap_or_else(GridContext::load)
+    suspended(
+        ACTIVE
+            .with(|slot| slot.borrow().clone())
+            .unwrap_or_else(GridContext::load),
+    )
 }
 
 pub(crate) fn with_context<T>(ctx: &GridContext, body: impl FnOnce() -> T) -> T {
@@ -495,6 +536,7 @@ impl GridContext {
             callbacks: None,
             file_api: None,
             builtin: Arc::new(OnceLock::new()),
+            grid_info: Arc::default(),
             hermetic: false,
         }
     }
@@ -675,6 +717,17 @@ impl GridContext {
     /// set callbacks (`ctx->networking.open != no_op_network_open`).
     pub(crate) fn network_possible(&self) -> bool {
         cfg!(feature = "network") || self.callbacks.is_some()
+    }
+
+    /// The grid records of this context: see [`crate::grid_info`].
+    pub(crate) fn grid_info(&self) -> &crate::grid_info::GridInfoCache {
+        &self.grid_info
+    }
+
+    /// A new, empty record of grids, as a new `DatabaseContext` of PROJ starts with: a cloned
+    /// context (`projCppContext::clone`), a database path set again, `proj_cleanup`.
+    pub(crate) fn reset_grid_info(&mut self) {
+        self.grid_info = Arc::default();
     }
 
     pub(crate) fn set_file_api(&mut self, api: Arc<dyn FileApi>) {

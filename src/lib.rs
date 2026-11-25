@@ -77,6 +77,7 @@ pub mod geodesic;
 #[doc(hidden)]
 pub mod gie;
 mod gie_api;
+mod grid_info;
 mod gridpath;
 mod helmert;
 #[doc(hidden)]

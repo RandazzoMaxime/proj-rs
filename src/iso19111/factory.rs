@@ -859,41 +859,6 @@ impl DatabaseContext {
             .map(|row| (row[0].text(), row[1].text() == "1")))
     }
 
-    /// `lookForGridInfo` with `considerKnownGridsAsAvailable`: a grid is known when
-    /// a grid package names it, when a download URL goes with an open licence, or
-    /// when the file is already on disk. `null` is always known.
-    pub(crate) fn grid_is_known(&self, name: &str) -> Result<bool, FactoryError> {
-        if name == "null" {
-            return Ok(true);
-        }
-        let local = crate::gridpath::resolve(name).is_some();
-        let rows = self.query(
-            "SELECT grid_packages.package_name, grid_alternatives.url, \
-             grid_packages.url, grid_alternatives.open_license, \
-             grid_packages.open_license \
-             FROM grid_alternatives \
-             LEFT JOIN grid_packages ON \
-             grid_alternatives.package_name = grid_packages.package_name \
-             WHERE proj_grid_name = ? OR old_proj_grid_name = ?",
-            &[name.to_owned(), name.to_owned()],
-        )?;
-        let Some(row) = rows.first() else {
-            return Ok(local);
-        };
-        let package = row[0].text();
-        let url = if row[1].empty() {
-            row[2].text()
-        } else {
-            row[1].text()
-        };
-        let open_license = if row[3].empty() {
-            row[4].text()
-        } else {
-            row[3].text()
-        } == "1";
-        Ok(!package.is_empty() || (!url.is_empty() && open_license) || local)
-    }
-
     /// `(auth_name, version)` for a code space such as `IAU_2015`.
     pub(crate) fn authority_and_version(&self, versioned: &str) -> Option<(String, String)> {
         let rows = self
@@ -1578,6 +1543,44 @@ impl DatabaseContext {
                 },
             });
         }
+        // `lookForGridInfo` (`factory.cpp:3398-3539`) through the grid records of the current
+        // context ([`crate::grid_info`]): a record of the same name, network state and
+        // `considerKnownGridsAsAvailable` is given back as it was found, and a grid that did not
+        // open is not tried again while its record is kept.
+        let ctx = crate::network::context();
+        let key = crate::grid_info::GridKey {
+            name: name.to_owned(),
+            network: ctx.enabled,
+            known: known == GridAvailabilityUse::KnownAvailable,
+        };
+        if let Some(found) = ctx.grid_info().get(&key) {
+            return Ok(found);
+        }
+        let lookup = self.look_for_grid_uncached(name, known, &ctx.endpoint)?;
+        ctx.grid_info().insert(key, lookup.clone());
+        Ok(lookup)
+    }
+
+    /// `resolveFullFilename` of `lookForGridInfo` (`factory.cpp:3441-3450`): the file `name`
+    /// opens as with `FileManager::open_resource_file`, on disk, else, with the network on, at
+    /// its URL, whose open looks the grid up again with the network off
+    /// (`filemanager.cpp:1859-1915`). `None` when it does not open.
+    fn open_resource_file(&self, name: &str) -> Option<String> {
+        if let Some(path) = crate::gridpath::resolve(name) {
+            return Some(path.to_string_lossy().into_owned());
+        }
+        crate::network::open_remote_grid_with(name, &|renamed| {
+            let _ignored = self.grid_lookup(renamed, GridAvailabilityUse::KnownAvailable);
+        })
+    }
+
+    fn look_for_grid_uncached(
+        &self,
+        name: &str,
+        known: GridAvailabilityUse,
+        endpoint: &str,
+    ) -> Result<GridLookup, FactoryError> {
+        let known = known == GridAvailabilityUse::KnownAvailable;
         let rows = self.query(
             "SELECT grid_packages.package_name, grid_alternatives.url, \
              grid_packages.url, grid_alternatives.open_license, \
@@ -1591,13 +1594,28 @@ impl DatabaseContext {
             &[name.to_owned(), name.to_owned()],
         )?;
         let Some(row) = rows.first() else {
+            // `factory.cpp:3523-3530`: the file, on disk or at the URL the network opens.
+            let opened = self.open_resource_file(name);
+            let available = opened.is_some();
+            let mut full_name = opened.unwrap_or_default();
+            let mut url = String::new();
+            if full_name.starts_with("http://") || full_name.starts_with("https://") {
+                url = std::mem::take(&mut full_name);
+            }
             return Ok(GridLookup {
                 in_database: false,
-                info: unlisted_grid(name),
+                info: GridInfo {
+                    full_name,
+                    package_name: String::new(),
+                    url,
+                    direct_download: false,
+                    open_license: false,
+                    available,
+                },
             });
         };
         let package_name = row[0].text();
-        let url = if row[1].empty() {
+        let mut url = if row[1].empty() {
             row[2].text()
         } else {
             row[1].text()
@@ -1615,21 +1633,25 @@ impl DatabaseContext {
             }
         }
         let known_grid = !package_name.is_empty() || (!url.is_empty() && open_license);
-        if !available && known == GridAvailabilityUse::KnownAvailable && known_grid {
-            available = true;
-            if let Some(path) = crate::gridpath::resolve(name) {
+        if !available && known && known_grid {
+            // The local file name if there is one, the network off (`factory.cpp:3496-3510`).
+            if let Some(path) =
+                crate::grid_info::with_network_off(|| crate::gridpath::resolve(name))
+            {
                 full_name = path.to_string_lossy().into_owned();
+            }
+            available = true;
+        }
+        if let Some(rest) = url.strip_prefix("https://cdn.proj.org/") {
+            if !endpoint.is_empty() {
+                let separator = if endpoint.ends_with('/') { "" } else { "/" };
+                url = format!("{endpoint}{separator}{rest}");
             }
         }
         if !available {
-            if let Some(path) = crate::gridpath::resolve(name) {
+            if let Some(opened) = self.open_resource_file(name) {
                 available = true;
-                full_name = path.to_string_lossy().into_owned();
-            } else if let Some(remote) = crate::network::open_remote_grid(name) {
-                // `resolveFullFilename` opens the grid with `open_resource_file`, which reads it
-                // from the network when it is on (factory.cpp:3441-3450, 3520-3522).
-                available = true;
-                full_name = remote;
+                full_name = opened;
             }
         }
         Ok(GridLookup {
@@ -1851,22 +1873,6 @@ pub struct GridLookup {
     pub in_database: bool,
     /// The record. Without a row, only `full_name` and `available` are set.
     pub info: GridInfo,
-}
-
-/// The record of a grid with no row in `proj.db`: available when its file is on the search path.
-fn unlisted_grid(name: &str) -> GridInfo {
-    let path = crate::gridpath::resolve(name);
-    GridInfo {
-        full_name: path
-            .as_ref()
-            .map(|path| path.to_string_lossy().into_owned())
-            .unwrap_or_default(),
-        package_name: String::new(),
-        url: String::new(),
-        direct_download: false,
-        open_license: false,
-        available: path.is_some(),
-    }
 }
 
 /// File, package, and download record of one grid in `proj.db`.
@@ -8633,7 +8639,10 @@ fn without_missing_grids(
     }
     let mut kept = Vec::with_capacity(operations.len());
     for operation in operations {
-        let grids = operation.grids_needed(&context.db, context.grid_availability)?;
+        // `DisableNetwork` (factory.cpp:4333-4359): only the grids known locally count.
+        let grids = crate::grid_info::with_network_off(|| {
+            operation.grids_needed(&context.db, context.grid_availability)
+        })?;
         if grids.iter().all(|grid| grid.info.available) {
             kept.push(operation);
         }
@@ -10216,7 +10225,10 @@ fn retain_available_grids(
 ) -> Result<Vec<CoordinateOperation>, FactoryError> {
     let mut kept = Vec::with_capacity(operations.len());
     for operation in operations {
-        let grids = operation.grids_needed(&context.db, context.grid_availability)?;
+        // `DisableNetwork` (factory.cpp:4333-4359): only the grids known locally count.
+        let grids = crate::grid_info::with_network_off(|| {
+            operation.grids_needed(&context.db, context.grid_availability)
+        })?;
         if grids.iter().all(|grid| grid.info.available) {
             kept.push(operation);
         }

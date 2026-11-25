@@ -91,7 +91,12 @@ impl Ctx {
             debug_level: other.debug_level,
             logger: other.logger,
             logger_data: other.logger_data,
-            builder: other.builder.clone(),
+            // `projCppContext::clone` opens a new `DatabaseContext`, with no grid record.
+            builder: {
+                let mut builder = other.builder.clone();
+                builder.reset_grid_records();
+                builder
+            },
             engine: other.engine.clone(),
             file_finder: other.file_finder,
             finder_data: other.finder_data,

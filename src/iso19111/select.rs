@@ -21,7 +21,7 @@ use super::alternatives::{
 };
 use super::factory::{
     operation_extent, sort_extents, AlternativeGridNames, GridAvailabilityUse, GridDescription,
-    GridInfo, SortExtents, SpatialCriterion,
+    SortExtents, SpatialCriterion,
 };
 use super::introsort::sorted_indices;
 use super::model::{
@@ -637,19 +637,17 @@ fn characteristics(
         Err(_) => (false, 0, false),
     };
     let grids = grid_names(operation);
-    // `gridsNeeded` reads the grid names of the operation: the PROJ names under
-    // `usePROJAlternativeGridNames`, the database names otherwise.
-    let named = match names {
-        AlternativeGridNames::Proj => proj_grids(operation, db).unwrap_or_else(|_| grids.clone()),
-        AlternativeGridNames::Official => grids.clone(),
-    };
-    // Only `UseForSorting` looks at the disk: PROJ clears `gridsAvailable` under that policy alone.
+    // `FilterResults::sort` (coordinateoperationfactory.cpp:1477-1500) looks each operation up
+    // with `gridsNeeded`, under every policy: only `USE_FOR_SORTING` clears `gridsAvailable`,
+    // and a grid neither in a package, nor at an open-license URL, nor available is not known.
+    let descriptions = sort_grids(operation, db, availability, names);
     let grids_available = availability != GridAvailabilityUse::UseForSorting
-        || named.iter().all(|grid| gridpath::available(grid));
-    let known_names = named;
-    let grids_known = known_names
-        .iter()
-        .all(|grid| db.grid_is_known(grid).unwrap_or(false));
+        || descriptions.iter().all(|grid| grid.info.available);
+    let grids_known = descriptions.iter().all(|grid| {
+        !grid.info.package_name.is_empty()
+            || (!grid.info.url.is_empty() && grid.info.open_license)
+            || grid.info.available
+    });
     let op_box = operation_extent(operation).and_then(|extent| extent.bounding_box());
     let area = pseudo_area_of(op_box, extents);
     let accuracy = super::compound::get_accuracy(operation);
@@ -703,6 +701,27 @@ fn pseudo_area_of(operation: Option<BoundingBox>, extents: &SortExtents) -> f64 
         (None, Some(target)) => area_of(operation.extent_intersection(&target)),
         (None, None) => operation.pseudo_area(),
     }
+}
+
+/// `gridsNeeded` of the sort: the grid names of the parameters, in their order, under the PROJ
+/// names of the database with `usePROJAlternativeGridNames` as the registry operations of PROJ
+/// carry them. A lookup that fails counts as no grid, as an operation PROJ could not look up.
+fn sort_grids(
+    operation: &CoordinateOperation,
+    db: &DatabaseContext,
+    availability: GridAvailabilityUse,
+    names: AlternativeGridNames,
+) -> Vec<GridDescription> {
+    let mut parameters = Vec::new();
+    collect_file_parameters(operation, &mut parameters);
+    if names == AlternativeGridNames::Proj {
+        for name in &mut parameters {
+            if let Ok(Some((proj, _))) = db.proj_grid_alternative(name) {
+                *name = proj;
+            }
+        }
+    }
+    grid_descriptions(db, parameters, availability, "").unwrap_or_default()
 }
 
 /// The grids of `operation` under the names PROJ reads them by, which is the
@@ -780,21 +799,6 @@ fn collect_grids(operation: &CoordinateOperation, names: &mut Vec<String>) {
     }
 }
 
-/// Whether a grid that is on no `proj.db` row and not on disk is asked of the network, to learn
-/// its URL and whether it is available (`lookForGridInfo`, the branch without a row).
-///
-/// PROJ asks in `proj_coordoperation_get_grid_used_count` (`gridsNeeded` on a built object), and
-/// in `proj_coordoperation_is_instantiable`. The factory's own checks switch the network off
-/// (`factory.cpp`, `DisableNetwork`). This port asks only in `Proj::grids_needed`: the factory
-/// and `is_proj_instantiable` keep looking at the disk, so the operation lists do not change.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum RemoteGrids {
-    /// Look at the disk only: a grid with no row and no file is unavailable, with no URL.
-    Skip,
-    /// With the network on, open the file at its endpoint URL (`network::open_remote_grid`).
-    Open,
-}
-
 /// The CDN URL of a grid written under the context `endpoint`, as `lookForGridInfo` writes it.
 /// `endpoint` is kept when it is empty or the URL is not on the CDN.
 fn endpoint_url(endpoint: &str, url: &str) -> String {
@@ -826,7 +830,7 @@ impl CoordinateOperation {
         db: &DatabaseContext,
         known: GridAvailabilityUse,
     ) -> Result<Vec<GridDescription>, FactoryError> {
-        self.grids_needed_with(db, known, RemoteGrids::Skip, "")
+        self.grids_needed_with(db, known, "")
     }
 
     /// [`Self::grids_needed`] with the grid download `endpoint` of the context: a database URL
@@ -842,10 +846,10 @@ impl CoordinateOperation {
         known: GridAvailabilityUse,
         endpoint: &str,
     ) -> Result<Vec<GridDescription>, FactoryError> {
-        self.grids_needed_with(db, known, RemoteGrids::Skip, endpoint)
+        self.grids_needed_with(db, known, endpoint)
     }
 
-    /// [`Self::grids_needed_at`], with `remote` deciding whether a grid on no row is opened.
+    /// [`Self::grids_needed_at`].
     ///
     /// # Errors
     ///
@@ -854,24 +858,11 @@ impl CoordinateOperation {
         &self,
         db: &DatabaseContext,
         known: GridAvailabilityUse,
-        remote: RemoteGrids,
         endpoint: &str,
     ) -> Result<Vec<GridDescription>, FactoryError> {
         let mut names = Vec::new();
         collect_file_parameters(self, &mut names);
-        names.sort();
-        names.dedup();
-        names
-            .into_iter()
-            .map(|short_name| {
-                let mut info = match db.look_for_grid_info(&short_name, known)? {
-                    Some(info) => info,
-                    None => unrecorded_grid(&short_name, remote),
-                };
-                info.url = endpoint_url(endpoint, &info.url);
-                Ok(GridDescription { short_name, info })
-            })
-            .collect()
+        grid_descriptions(db, names, known, endpoint)
     }
 
     /// `isPROJInstantiable`: the operation writes a PROJ string, and each grid it needs is
@@ -964,34 +955,25 @@ fn proj_based_grid_names(text: &str) -> Vec<String> {
     names
 }
 
-/// `lookForGridInfo` for a grid the database has no row for: available when its file is on
-/// the search path, and a URL when the name is one. With `remote` on [`RemoteGrids::Open`], a
-/// grid that is not on disk is available at the URL the network opens it at, and that URL is
-/// its URL (`resolveFullFilename` in PROJ, which clears the full name of a remote file).
-fn unrecorded_grid(name: &str, remote: RemoteGrids) -> GridInfo {
-    let url = if name.starts_with("http://") || name.starts_with("https://") {
-        name.to_owned()
-    } else {
-        String::new()
-    };
-    let (full_name, url, available) = match gridpath::resolve(name) {
-        Some(path) if url.is_empty() => (path.to_string_lossy().into_owned(), url, true),
-        _ if url.is_empty() && remote == RemoteGrids::Open => {
-            match crate::network::open_remote_grid(name) {
-                Some(remote_url) => (String::new(), remote_url, true),
-                None => (String::new(), url, false),
-            }
+/// `gridsNeeded` (`singleoperation.cpp:1756-1780`, `concatenatedoperation.cpp:980-994`): each
+/// name is looked up in the order of the parameters and steps, a repeated name again, and the
+/// descriptions come out as PROJ's `std::set` of them, sorted by name, each name once.
+fn grid_descriptions(
+    db: &DatabaseContext,
+    names: Vec<String>,
+    known: GridAvailabilityUse,
+    endpoint: &str,
+) -> Result<Vec<GridDescription>, FactoryError> {
+    let mut found: Vec<GridDescription> = Vec::with_capacity(names.len());
+    for short_name in names {
+        let mut info = db.grid_lookup(&short_name, known)?.info;
+        info.url = endpoint_url(endpoint, &info.url);
+        if !found.iter().any(|grid| grid.short_name == short_name) {
+            found.push(GridDescription { short_name, info });
         }
-        _ => (String::new(), url, false),
-    };
-    GridInfo {
-        full_name,
-        package_name: String::new(),
-        url,
-        direct_download: false,
-        open_license: false,
-        available,
     }
+    found.sort_by(|a, b| a.short_name.cmp(&b.short_name));
+    Ok(found)
 }
 
 fn step_count(operation: &CoordinateOperation) -> usize {
@@ -1377,11 +1359,13 @@ pub fn select_alternatives_for_crs(
         .filter(|operation| filter.keeps(operation))
         .collect::<Vec<_>>();
     let extents = sort_extents(&context, &source_crs, &target_crs);
-    // `proj_create_crs_to_crs` asks KNOWN_AVAILABLE unless ONLY_BEST=NO (DISCARD), and the sort
-    // then does not look at the disk.
-    let availability = match policy {
-        BestPolicy::Discard => GridAvailabilityUse::UseForSorting,
-        BestPolicy::Warn | BestPolicy::Error => GridAvailabilityUse::KnownAvailable,
+    // `proj_create_crs_to_crs` asks KNOWN_AVAILABLE unless ONLY_BEST=NO with the network off
+    // (DISCARD), and the sort then does not look at the disk (`crs_to_crs.cpp:566-573`).
+    let discards = policy == BestPolicy::Discard && !grids.enabled;
+    let availability = if discards {
+        GridAvailabilityUse::UseForSorting
+    } else {
+        GridAvailabilityUse::KnownAvailable
     };
     let ranked = rank(
         operations,
@@ -1391,9 +1375,10 @@ pub fn select_alternatives_for_crs(
         availability,
         &extents,
     );
-    let ranked = match policy {
-        BestPolicy::Discard => discard_missing(ranked),
-        BestPolicy::Warn | BestPolicy::Error => ranked,
+    let ranked = if discards {
+        discard_missing(ranked)
+    } else {
+        ranked
     };
     // `op_count == 1` returns the operation before any preparation (`crs_to_crs.cpp:617-647`).
     // `crs_to_crs.cpp:617-647`: a single operation is returned unless the default policy may
@@ -1659,10 +1644,14 @@ pub(crate) fn facade_candidates(
         )));
     }
     let extents = sort_extents(&context, &source_crs, &target_crs);
-    // KNOWN_AVAILABLE does not look at the disk; ONLY_BEST=NO sorts on it and drops what misses.
-    let availability = match policy {
-        BestPolicy::Discard => GridAvailabilityUse::UseForSorting,
-        BestPolicy::Warn | BestPolicy::Error => GridAvailabilityUse::KnownAvailable,
+    // KNOWN_AVAILABLE does not look at the disk; ONLY_BEST=NO with the network off sorts on it
+    // and drops what misses. With the network on PROJ asks KNOWN_AVAILABLE whatever ONLY_BEST is
+    // (`crs_to_crs.cpp:566-573`).
+    let discards = policy == BestPolicy::Discard && !grids.enabled;
+    let availability = if discards {
+        GridAvailabilityUse::UseForSorting
+    } else {
+        GridAvailabilityUse::KnownAvailable
     };
     let ranked = rank(
         operations,
@@ -1672,9 +1661,10 @@ pub(crate) fn facade_candidates(
         availability,
         &extents,
     );
-    let ranked = match policy {
-        BestPolicy::Discard => discard_missing(ranked),
-        BestPolicy::Warn | BestPolicy::Error => ranked,
+    let ranked = if discards {
+        discard_missing(ranked)
+    } else {
+        ranked
     };
     if ranked.is_empty() {
         return Err(FactoryError::Format(format!(
@@ -1846,21 +1836,25 @@ fn rank(
     availability: GridAvailabilityUse,
     extents: &SortExtents,
 ) -> Vec<(CoordinateOperation, Characteristics)> {
-    let ranked = operations
-        .into_iter()
-        .map(|operation| {
-            let characteristics = characteristics(
-                &operation,
-                db,
-                source,
-                target,
-                availability,
-                AlternativeGridNames::Proj,
-                extents,
-            );
-            (operation, characteristics)
-        })
-        .collect();
+    // `createOperations` looked the grids up when it sorted the list: this ranking reads them
+    // again without a lookup PROJ would make.
+    let ranked = crate::grid_info::with_records_untouched(|| {
+        operations
+            .into_iter()
+            .map(|operation| {
+                let characteristics = characteristics(
+                    &operation,
+                    db,
+                    source,
+                    target,
+                    availability,
+                    AlternativeGridNames::Proj,
+                    extents,
+                );
+                (operation, characteristics)
+            })
+            .collect()
+    });
     sort(ranked)
 }
 
