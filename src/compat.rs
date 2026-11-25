@@ -31,23 +31,6 @@ pub(crate) fn is_multiple_of(n: usize, of: usize) -> bool {
     n % of == 0
 }
 
-/// The groups of four of a slice whose length is a multiple of four (`<[f64]>::as_chunks`,
-/// Rust 1.88).
-#[cfg(simd_lanes)]
-pub(crate) fn quads(slice: &[f64]) -> impl Iterator<Item = &[f64; 4]> {
-    slice
-        .chunks_exact(4)
-        .map(|chunk| <&[f64; 4]>::try_from(chunk).expect("a chunk of exactly four"))
-}
-
-/// [`quads`] for a mutable slice (`<[f64]>::as_chunks_mut`).
-#[cfg(simd_lanes)]
-pub(crate) fn quads_mut(slice: &mut [f64]) -> impl Iterator<Item = &mut [f64; 4]> {
-    slice
-        .chunks_exact_mut(4)
-        .map(|chunk| <&mut [f64; 4]>::try_from(chunk).expect("a chunk of exactly four"))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -73,18 +56,5 @@ mod tests {
         assert!(is_multiple_of(0, 3));
         assert!(is_multiple_of(12, 4));
         assert!(!is_multiple_of(13, 4));
-    }
-
-    #[cfg(simd_lanes)]
-    #[test]
-    fn quads_group_by_four() {
-        let data = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
-        let groups: Vec<[f64; 4]> = quads(&data).copied().collect();
-        assert_eq!(groups, vec![[1.0, 2.0, 3.0, 4.0], [5.0, 6.0, 7.0, 8.0]]);
-        let mut out = [0.0; 8];
-        for (group, source) in quads_mut(&mut out).zip(quads(&data)) {
-            *group = *source;
-        }
-        assert_eq!(out, data);
     }
 }

@@ -1,10 +1,15 @@
-//! The bits of the AVX2 batch path, fixed before its intrinsics moved behind the safe API of
+//! The bits of the batch paths, fixed before the intrinsics moved behind the safe API of
 //! `pulp` (`docs/PORTING-simd.md`, "Sans `unsafe`"). The kernels, the order of the operations
 //! and the FMA are the same: not one bit may change, on any kernel, in the fast path or in the
 //! groups that fall back to the scalar path (non-finite values, poles, out of domain).
+//!
+//! AVX-512 (8 lanes, the `avx512` feature) gives the AVX2 (4 lanes) bits on every kernel whose
+//! result does not depend on how the points are grouped: only `asinh` and `atanh` have an
+//! "all lanes small" branch whose result depends on the group, so the kernels that call them
+//! (`Tmerc`, `Lcc`, `Mercator`) get their own digests at 8 lanes, in `GOLDEN_AVX512`.
 
-// The digests are those of the AVX2 path with glibc on x86-64: the scalar path, or another libm
-// for the fallbacks, gives other bits.
+// The digests are those of the vector paths with glibc on x86-64: the scalar path, or another
+// libm for the fallbacks, gives other bits.
 #![cfg(all(target_os = "linux", target_env = "gnu", target_arch = "x86_64"))]
 
 use proj_rs::{Ellipsoid, Hemisphere, Lcc, Mercator, Proj, Tmerc, UtmZone};
@@ -158,20 +163,27 @@ fn digests() -> Vec<(String, u64)> {
 
 #[test]
 fn the_batch_path_keeps_its_bits() {
-    if proj_rs::batch_path() != "avx2" {
-        eprintln!("no AVX2 on this machine: the digests are those of the AVX2 path, skipped");
+    let path = proj_rs::batch_path();
+    if !matches!(path, "avx2" | "avx512") {
+        eprintln!(
+            "no vector path on this machine: the digests are those of the AVX2 path, skipped"
+        );
         return;
     }
+    let golden: &[(&str, u64)] = match path {
+        "avx512" => GOLDEN_AVX512,
+        _ => GOLDEN,
+    };
     let got = digests();
     if std::env::var_os("GOLDEN_PRINT").is_some() {
         for (name, hash) in &got {
             eprintln!("    (\"{name}\", {hash:#018x}),");
         }
     }
-    assert_eq!(got.len(), GOLDEN.len());
-    for ((name, hash), (want_name, want)) in got.iter().zip(GOLDEN) {
+    assert_eq!(got.len(), golden.len());
+    for ((name, hash), (want_name, want)) in got.iter().zip(golden) {
         assert_eq!(name, want_name);
-        assert_eq!(*hash, *want, "{name}");
+        assert_eq!(*hash, *want, "{name} ({path})");
     }
 }
 
@@ -182,6 +194,40 @@ const GOLDEN: &[(&str, u64)] = &[
     ("lambert93 inverse_batch", 0x0c969db210dfcaff),
     ("webmerc forward_batch", 0x1618cd5e97590bd3),
     ("webmerc inverse_batch", 0x3ea4d05a6a3b973d),
+    ("convert EPSG:4326 EPSG:2154 (true)", 0xefc0e5a6ef7fc657),
+    ("inverse EPSG:4326 EPSG:2154 (true)", 0x27cd817ae442766b),
+    ("convert EPSG:4326 EPSG:32631 (true)", 0xfebb7320d92d4e97),
+    ("inverse EPSG:4326 EPSG:32631 (true)", 0xeef6190ed3c5fe55),
+    ("convert EPSG:4326 EPSG:3857 (true)", 0x721d38edea7fd9b3),
+    ("inverse EPSG:4326 EPSG:3857 (true)", 0x471efcc9a25162c3),
+    ("convert EPSG:4326 EPSG:3395 (true)", 0x368779de69086480),
+    ("inverse EPSG:4326 EPSG:3395 (true)", 0x87000d34b8f3ad60),
+    ("convert EPSG:4326 EPSG:3035 (true)", 0x9a8bd13bbc05e3a9),
+    ("inverse EPSG:4326 EPSG:3035 (true)", 0x5e740725f5e4c7f7),
+    ("convert EPSG:4326 EPSG:28992 (true)", 0x10fb35cac39bdb39),
+    ("inverse EPSG:4326 EPSG:28992 (true)", 0xa29cf99130e6af7b),
+    ("convert EPSG:4326 EPSG:2056 (true)", 0xfd7541f136feea90),
+    ("inverse EPSG:4326 EPSG:2056 (true)", 0x74d4649108d9e41c),
+    ("convert EPSG:4230 EPSG:4326 (true)", 0x89aecd7bedf30162),
+    ("inverse EPSG:4230 EPSG:4326 (true)", 0xc50cb0279cc815de),
+    ("convert EPSG:4326 EPSG:27700 (true)", 0xf89a644f8e086b91),
+    ("inverse EPSG:4326 EPSG:27700 (true)", 0x53804c2a4bdbcba3),
+    ("convert EPSG:4326 EPSG:31370 (true)", 0x473d8d98774f9302),
+    ("inverse EPSG:4326 EPSG:31370 (true)", 0x3af2b4710b5a3bcf),
+    ("convert EPSG:4326 EPSG:3034 (true)", 0x3616f19c615e3a90),
+    ("inverse EPSG:4326 EPSG:3034 (true)", 0x794c014b94f80a25),
+];
+
+/// The digests of the AVX-512 path (8 lanes): the same as `GOLDEN` for every kernel that does
+/// not depend on the grouping of the points; `utm31`, `lambert93` and `webmerc` call `asinh` or
+/// `atanh`, whose "all lanes small" branch depends on the group, hence on the lane count.
+const GOLDEN_AVX512: &[(&str, u64)] = &[
+    ("utm31 forward_batch", 0x533e73d9ba140863),
+    ("utm31 inverse_batch", 0x1c835e4e39d39cda),
+    ("lambert93 forward_batch", 0x1c553814c3956ad4),
+    ("lambert93 inverse_batch", 0xc1ea821b7353cf6b),
+    ("webmerc forward_batch", 0xe49ef62c5ea4cfea),
+    ("webmerc inverse_batch", 0x2668913157d6a15a),
     ("convert EPSG:4326 EPSG:2154 (true)", 0xefc0e5a6ef7fc657),
     ("inverse EPSG:4326 EPSG:2154 (true)", 0x27cd817ae442766b),
     ("convert EPSG:4326 EPSG:32631 (true)", 0xfebb7320d92d4e97),

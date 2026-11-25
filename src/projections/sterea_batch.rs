@@ -1,4 +1,4 @@
-//! `sterea` en quatre voies : [`Sterea::forward`] et [`Sterea::inverse`], opération par
+//! `sterea` en `N` voies : [`Sterea::forward`] et [`Sterea::inverse`], opération par
 //! opération (`gauss.cpp`, `sterea.cpp`). Sort du domaine vectoriel, et passe donc par le scalaire :
 //! une valeur non finie, un dénominateur nul, un argument d'`asin` près de ±1, un Newton qui ne
 //! converge pas en vingt tours.
@@ -13,19 +13,24 @@ mod vector {
     use super::{Sterea, UnitLanes};
     use crate::projections::sterea::DEL_TOL;
     use crate::simd::kernels;
-    use crate::simd::{Token, V4};
+    use crate::simd::{Mask, Vector, VectorMath};
 
     /// `srat` de `sterea.rs`.
     #[inline(always)]
-    fn srat(tok: Token, esinp: V4, ratexp: f64) -> V4 {
-        let one = V4::splat(tok, 1.0);
-        ((one - esinp) / (one + esinp)).powf(V4::splat(tok, ratexp))
+    fn srat<V: Vector<N>, const N: usize>(tok: V::Token, esinp: V, ratexp: f64) -> V {
+        let one = V::splat(tok, 1.0);
+        ((one - esinp) / (one + esinp)).powf(V::splat(tok, ratexp))
     }
 
     impl UnitLanes for Sterea {
         #[inline(always)]
-        fn forward_lanes(&self, tok: Token, lam: V4, phi: V4) -> Option<(V4, V4)> {
-            let k = |value| V4::splat(tok, value);
+        fn forward_lanes<V: Vector<N>, const N: usize>(
+            &self,
+            tok: V::Token,
+            lam: V,
+            phi: V,
+        ) -> Option<(V, V)> {
+            let k = |value| V::splat(tok, value);
             let g = &self.gauss;
             if !kernels::latitude_in_domain(tok, phi)
                 .and(lam.is_finite())
@@ -54,8 +59,13 @@ mod vector {
         }
 
         #[inline(always)]
-        fn inverse_lanes(&self, tok: Token, x: V4, y: V4) -> Option<(V4, V4)> {
-            let k = |value| V4::splat(tok, value);
+        fn inverse_lanes<V: Vector<N>, const N: usize>(
+            &self,
+            tok: V::Token,
+            x: V,
+            y: V,
+        ) -> Option<(V, V)> {
+            let k = |value| V::splat(tok, value);
             let g = &self.gauss;
             let (x, y) = (x / k(self.k0), y / k(self.k0));
             let rho = x.hypot(y);
@@ -78,7 +88,7 @@ mod vector {
                 let next = k(2.0) * (num * srat(tok, k(g.e) * phi.sin_cos().0, -0.5 * g.e)).atan()
                     - k(FRAC_PI_2);
                 let converged = (next - phi).abs().lt(tolerance);
-                phi = V4::select(done, phi, next);
+                phi = V::select(done, phi, next);
                 done = done.or(converged);
                 if done.all() {
                     break;

@@ -78,6 +78,11 @@ doc = false
 required-features = ["network"]
 
 [features]
+# AVX-512 batch path (8 lanes of `f64`, `src/simd/v8.rs`) on x86-64, preferred over AVX2 when the
+# CPU has it. Off by default: it needs the AVX-512 types of `std::arch`, stable since Rust 1.89,
+# above the `rust-version` floor of this crate (1.83), so the `pulp/x86-v4` feature is only
+# enabled here, and only on x86_64. Build with `--features avx512` on a Rust >= 1.89 toolchain.
+avx512 = ["pulp/x86-v4"]
 geo-types = ["dep:geo-types"]
 # Grid download over HTTP(S), as PROJ built with `ENABLE_CURL`. Off by default: without it no
 # TLS library is compiled or linked, and a context with the network on can only use the
@@ -102,7 +107,9 @@ tiff = { version = "0.10.3", default-features = false, features = ["deflate"] }
 native-tls = { version = "0.2.14", optional = true }
 
 # The AVX2 batch path (`src/simd/`): safe wrappers of the intrinsics behind a CPU-detected token,
-# and the dispatch into code compiled with `avx2,fma`. MIT; builds with Rust 1.83.
+# and the dispatch into code compiled with `avx2,fma`. MIT; builds with Rust 1.83. The `avx512`
+# feature adds the `x86-v4` feature of pulp, for the 8-lane AVX-512 path (`src/simd/v8.rs`); it
+# needs Rust 1.89, so it is off by default and the floor build never enables it.
 [target.'cfg(target_arch = "x86_64")'.dependencies]
 pulp = { version = "0.22.3", default-features = false, features = ["std", "x86-v3"] }
 

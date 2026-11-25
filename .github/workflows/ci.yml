@@ -152,7 +152,12 @@ jobs:
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ steps.declared.outputs.version }}
-      - run: cargo check --workspace --lib --bins --all-features
+      # Every feature but `avx512`: the AVX-512 batch path uses the `std::arch` AVX-512 types,
+      # stable since Rust 1.89, so its cargo feature (which enables `pulp/x86-v4`) cannot build on
+      # the MSRV toolchain. Keep this list in sync with the `[features]` of the workspace manifests.
+      - run: >-
+          cargo check --workspace --lib --bins --features
+          "proj-rs/geo-types,proj-rs/network,proj-rs/unstable,proj-rs-georust/geo-types,proj-rs-georust/network,proj-rs-georust/tiff,proj-rs-georust/bundled_proj,proj-rs-georust/pkg_config,proj-rs-capi/network"
 
   # Breaking changes of the stable surface against the last published version.
   # Disabled: 1.0.0 of proj-rs and proj-rs-georust is ready to publish (docs/PUBLISHING.md) but is

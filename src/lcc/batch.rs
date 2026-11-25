@@ -1,12 +1,12 @@
-//! Lambert conique conforme par lots, quatre points à la fois.
+//! Lambert conique conforme par lots, `N` points à la fois.
 //!
 //! Les formules sont celles de [`Lcc::fwd_unit`] et [`Lcc::inv_unit`], écrites contre
-//! [`crate::simd::V4`]. Un groupe de quatre qu'une voie sort du domaine du noyau (valeur non
+//! [`V`]. Un groupe de `N` qu'une voie sort du domaine du noyau (valeur non
 //! finie, pôle, `rho` nul) passe par le chemin scalaire : ses points valent exactement ceux de
 //! [`Lcc::forward`] et [`Lcc::inverse`].
 
 use super::Lcc;
-use crate::simd::Lanes;
+use crate::simd::{Lanes, Vector};
 
 /// `forward` en lot : degrés vers mètres.
 pub(super) struct Forward<'a>(pub(super) &'a Lcc);
@@ -23,12 +23,12 @@ impl Lanes for Forward<'_> {
 
     #[cfg(simd_lanes)]
     #[inline(always)]
-    fn lanes(
+    fn lanes<V: Vector<N>, const N: usize>(
         &self,
-        tok: crate::simd::Token,
-        lon_deg: crate::simd::V4,
-        lat_deg: crate::simd::V4,
-    ) -> Option<(crate::simd::V4, crate::simd::V4)> {
+        tok: V::Token,
+        lon_deg: V,
+        lat_deg: V,
+    ) -> Option<(V, V)> {
         vector::forward(self.0, tok, lon_deg, lat_deg)
     }
 }
@@ -42,12 +42,12 @@ impl Lanes for Inverse<'_> {
 
     #[cfg(simd_lanes)]
     #[inline(always)]
-    fn lanes(
+    fn lanes<V: Vector<N>, const N: usize>(
         &self,
-        tok: crate::simd::Token,
-        east: crate::simd::V4,
-        north: crate::simd::V4,
-    ) -> Option<(crate::simd::V4, crate::simd::V4)> {
+        tok: V::Token,
+        east: V,
+        north: V,
+    ) -> Option<(V, V)> {
         vector::inverse(self.0, tok, east, north)
     }
 }
@@ -59,12 +59,17 @@ mod vector {
     use super::Lcc;
     use crate::lcc::EPS10;
     use crate::simd::kernels::{self, DEG_TO_RAD, RAD_TO_DEG};
-    use crate::simd::{Token, V4};
+    use crate::simd::{Mask, Vector, VectorMath};
 
-    /// [`Lcc::forward`] sur quatre points.
+    /// [`Lcc::forward`] sur `N` points.
     #[inline(always)]
-    pub(super) fn forward(l: &Lcc, tok: Token, lon_deg: V4, lat_deg: V4) -> Option<(V4, V4)> {
-        let k = |value| V4::splat(tok, value);
+    pub(super) fn forward<V: Vector<N>, const N: usize>(
+        l: &Lcc,
+        tok: V::Token,
+        lon_deg: V,
+        lat_deg: V,
+    ) -> Option<(V, V)> {
+        let k = |value| V::splat(tok, value);
         let lon_r = lon_deg * k(DEG_TO_RAD);
         let lat_r = lat_deg * k(DEG_TO_RAD);
         // Un pôle (`rho` nul ou refusé selon le cône) reste au chemin scalaire.
@@ -92,10 +97,15 @@ mod vector {
         ))
     }
 
-    /// [`Lcc::inverse`] sur quatre points.
+    /// [`Lcc::inverse`] sur `N` points.
     #[inline(always)]
-    pub(super) fn inverse(l: &Lcc, tok: Token, east: V4, north: V4) -> Option<(V4, V4)> {
-        let k = |value| V4::splat(tok, value);
+    pub(super) fn inverse<V: Vector<N>, const N: usize>(
+        l: &Lcc,
+        tok: V::Token,
+        east: V,
+        north: V,
+    ) -> Option<(V, V)> {
+        let k = |value| V::splat(tok, value);
         let mut x = (east - k(l.x0)) * k(l.ra) / k(l.k0);
         let mut y = k(l.rho0) - (north - k(l.y0)) * k(l.ra) / k(l.k0);
         let mut rho = x.hypot(y);
@@ -103,7 +113,7 @@ mod vector {
         if !x
             .is_finite()
             .and(y.is_finite())
-            .and(rho.eq(V4::zero(tok)).not())
+            .and(rho.eq(V::zero(tok)).not())
             .all()
         {
             return None;
