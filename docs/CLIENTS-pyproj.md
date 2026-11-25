@@ -9,62 +9,100 @@ tests.
 
 `tools/clients/pyproj.sh` compile pyproj 3.8.0 (source épinglée par son sha256) deux fois :
 
-- contre PROJ 9.9.0, installé depuis la référence de `tools/build-reference.sh` ;
-- contre notre `libproj` (`capi/tests/dist.sh --release`).
+- contre PROJ 9.9.0 compilé avec TIFF et curl, comme le construisent les distributions et les
+  wheels de pyproj (`PROJ_REF_TIFF_CURL=ON tools/build-reference.sh`, à partir des sources de la
+  référence) ;
+- contre notre `libproj` (`capi/tests/dist.sh --release`, avec la fonctionnalité `network`).
 
-Il lance la suite de pyproj dans les deux cas : hors réseau (`-m "not network"`), avec le même
-dossier de données (le `share/proj` de la référence). Une différence vient donc de la bibliothèque,
-pas de l'environnement. `tools/clients/compare_junit.py` compare les deux rapports test par test,
-et classe par cause les tests qui passent avec PROJ et échouent avec nous.
+Il lance toute la suite de pyproj dans les deux cas, tests marqués `network` compris (ils lisent
+`cdn.proj.org`, par le proxy HTTPS quand il y en a un), avec le même dossier de données (le
+`share/proj` de PROJ 9.9.0 installé) et les mêmes paquets Python épinglés, dépendances
+optionnelles des tests comprises (shapely, pandas, xarray). La commande `pyproj` du venv est sur
+le `PATH` (`test_cli.py` la lance). Une différence vient donc de la bibliothèque, pas de
+l'environnement. `tools/clients/compare_junit.py` compare les deux rapports test par test, classe
+par cause les tests qui passent avec PROJ et échouent avec nous, et le script échoue dès qu'un
+test a une issue différente dans les deux passes.
 
-## Résultat (pyproj 3.8.0, le 2026-11-20)
+### Quelle libproj chaque passe charge
+
+`tools/clients/libproj_proof.sh` (le même que pour GRASS, PDAL, SpatiaLite et libgeotiff) le
+vérifie dans chaque passe, et le script échoue sinon : `ldd` des 9 modules de pyproj qui lient
+`libproj.so.25` résout le fichier de la passe, aucun objet de leur chaîne n'a de `DT_RPATH`
+(pyproj se lie avec un `DT_RUNPATH`), une vraie transformation (`Transformer.from_crs`) tourne sous
+`LD_DEBUG=libs` et l'intercepteur `tools/clients/proj_count.c`, puis l'intercepteur reste chargé
+pendant tout `pytest`. Python charge libproj par `dlopen` avec `RTLD_LOCAL` (dépendance d'un module
+d'extension) : `proj_count.c` cherche alors la fonction suivante par le chemin de la libproj
+chargée, `RTLD_NEXT` ne la voyant pas.
+
+```
+reference: ldd _crs.cpython-313-x86_64-linux-gnu.so: libproj.so.25 => .../pyproj/ref-prefix/lib/libproj.so.25
+reference: no DT_RPATH that could load another libproj
+reference: python: (500000.0000000007, 4982950.400226552)
+reference: LD_DEBUG=libs: calling init: .../pyproj/ref-prefix/lib/libproj.so.25
+reference: interposer: .../ref-prefix/lib/libproj.so.25.9.9.0, proj_create=4/0 proj_create_crs_to_crs_from_pj=1/0 proj_trans=1/1
+reference: interposer: 0 processes mapped a libproj at start, 1 called into it, all .../ref-prefix/lib/libproj.so.25.9.9.0
+proj-rs: ldd _crs.cpython-313-x86_64-linux-gnu.so: libproj.so.25 => .../pyproj/ours-prefix/lib/libproj.so.25
+proj-rs: no DT_RPATH that could load another libproj
+proj-rs: python: (500000.0000000007, 4982950.400226552)
+proj-rs: LD_DEBUG=libs: calling init: .../pyproj/ours-prefix/lib/libproj.so.25
+proj-rs: interposer: .../ours-prefix/lib/libproj.so.25, proj_create=4/0 proj_create_crs_to_crs_from_pj=1/0 proj_trans=1/1
+proj-rs: interposer: 0 processes mapped a libproj at start, 1 called into it, all .../ours-prefix/lib/libproj.so.25
+```
+
+## Résultat (pyproj 3.8.0, le 2026-11-25)
+
+Machine : Linux x86-64 (Ubuntu 24.04), 4 vCPU. pyproj 3.8.0, Python 3.13.18, pytest 9.2.0,
+numpy 2.5.5, shapely 2.2.0, pandas 3.1.1, xarray 2026.9.0. PROJ 9.9.0 (`1df2be6`) avec TIFF et
+curl ; proj-rs au commit `07edeec` de `main`. Exécution complète du script : 3 min 24 s (PROJ avec
+TIFF et curl déjà construit ; la première fois, sa construction ajoute 3 minutes), `pytest` en
+21 s avec PROJ, 63 s avec proj-rs.
 
 | | PROJ 9.9.0 | proj-rs |
 |---|---:|---:|
-| Tests réussis | 985 | 431 |
-| Passent avec PROJ, échouent avec proj-rs | | 276 |
-| Passent avec PROJ, non lancés avec proj-rs (module qui ne se charge pas) | | 278 |
-| Passent avec proj-rs, échouent avec PROJ | | 0 |
+| Tests lancés (plus 192 sous-tests de chaque côté) | 1045 | 1045 |
+| Réussis | 1044 | 1044 |
+| Échoués | 0 | 0 |
+| Ignorés par pyproj lui-même (`@pytest.mark.skip`, PROJ#2425) | 1 | 1 |
+| Issue différente entre les deux passes | | 0 |
 
-Les 11 échecs de la référence viennent de l'environnement (par exemple `projsync`, que la
-référence ne compile pas) : ils ne comptent pas.
+**pyproj 3.8.0 passe sa suite complète avec la libproj de proj-rs, test par test comme avec
+PROJ 9.9.0.** Le seul test ignoré l'est sans condition dans les sources de pyproj
+(`test_illegal_transformation`, `@pytest.mark.skip(reason="https://github.com/OSGeo/PROJ/issues/2425")`).
 
-## Ce qui manque, par ordre d'importance
+Le banc a d'abord tourné sur `8838d92`, avant #363 : 1044 contre 1043. Le test
+`test_transformer.py::test_transformer_group__download_grids` échouait avec proj-rs seul :
+`proj_coordoperation_get_grid_used` et `proj_coordoperation_is_instantiable` cherchaient les
+grilles sur `PROJ_DATA` seulement, pas sur les chemins posés par `proj_context_set_search_paths`
+(pyproj `append_data_dir`), si bien que les deux grilles téléchargées restaient
+`available=False` et que pyproj les téléchargeait de nouveau
+(`Expected '_download_resource_file' to not have been called. Called 2 times.`). En C, avec les
+chemins `[<dossier de proj.db>, data/tests]` et sans `PROJ_DATA`, PROJ 9.9.0 donnait
+`us_noaa_alaska.tif available=1 file=alaska` et `instantiable=1`, `8838d92` `available=0 file=`
+et `instantiable=0`, pour 6 grilles de `EPSG:4326` vers `EPSG:2964` et de `EPSG:4267` vers
+`EPSG:4269`. Le cache des grilles par contexte de #363 (`lookForGridInfo` sous le contexte) donne
+le même résultat que PROJ 9.9.0 sur ces 6 grilles, et le test passe.
 
-1. **`geodesic.h` et les 21 fonctions `geod_*` ne sont pas exportés.** PROJ installe cette API
-   publique (`geod_init`, `geod_inverse`, `geod_direct`, les lignes et les polygones), et pyproj
-   ne compile pas sans elle (`Geod`). Le calcul existe déjà en Rust dans le dépôt (portage de
-   `geodesic.c`). Il manque l'interface C, avec des structures identiques à celles de
-   `geodesic.h`, puisque l'appelant les alloue lui-même. **Bloquant.** Pour mesurer le reste, le
-   script précharge le `geodesic.c` de PROJ dans le seul passage proj-rs, et le dit.
-2. **Plantage dans `proj_operation_factory_context_set_allowed_intermediate_crs`** : une lecture
-   au-delà du `NULL` de fin de liste. `TransformerGroup(..., pivot_crs=...)` plantait tout le
-   processus. **Corrigé** par la PR #265.
-3. **PROJJSON : un objet qui n'est pas un CRS n'est pas importé** (109 tests, plus les modules
-   `test_crs.py` et `test_crs_maker.py`, qui ne se chargent pas) : `proj_create` sur un PROJJSON
-   de type `CoordinateOperation`, `CoordinateSystem`, `Ellipsoid`, `GeodeticReferenceFrame`,
-   `PrimeMeridian` ou `DatumEnsemble`.
-4. **`proj_create` sur une chaîne PROJ sans `+type=crs`** (75 tests, plus le module
-   `test_datum_shift.py`) : nous rendons un CRS (`proj_get_type` donne 10, 12 ou 15, géocentrique,
-   géographique 2D ou projeté) là où PROJ rend une opération. La classe `Proj` de pyproj passe par
-   là.
-5. **`+init=<fichier>:<clé>`** (19 tests) : `+init=ITRF2008:ITRF2000`, avec les fichiers
-   d'initialisation du dossier de données, n'est pas lu.
-6. **URN** : un ensemble de datums (`urn:ogc:def:ensemble:EPSG::6326`, 14 tests) et une opération
-   (`urn:ogc:def:coordinateOperation:EPSG::1671`, 3 tests) ne se créent pas.
-7. **`proj_create_crs_to_crs_from_pj` échoue** (13 tests), **un `NULL` rendu là où PROJ rend une
-   valeur** (12), **`proj_normalize_for_visualization` échoue** (5), et 26 cas isolés : listes de
-   métadonnées vides, textes de `__repr__`, un ballpark au lieu de « ED50 to WGS 84 (1) ».
-   Liste complète : `target/clients/pyproj/proj-rs/results.xml.regressions.tsv` après le script.
-8. **pyproj exige un fichier `proj.db` sur disque.** Sans lui, `import pyproj` lève
-   `DataDirError`, même si notre bibliothèque n'en a pas besoin : pyproj vérifie le fichier avant
-   d'appeler PROJ. Pour un remplacement transparent, l'archive libproj devrait porter
-   `share/proj/proj.db` (10 Mo), comme PROJ.
+## Ce que le banc ne mesurait pas avant
 
-Les points 3 et 4 cachent 278 tests qui n'ont pas tourné : les chiffres bougeront quand ils seront
-réglés. Le script est à relancer après chaque lot.
+La version précédente de ce document (exécution du 2026-11-20 : 985 réussis avec PROJ, 431 avec
+proj-rs) date d'avant l'export de `geodesic.h`, de l'import PROJJSON des objets qui ne sont pas des
+CRS et des chaînes PROJ sans `+type=crs` (1.1.0). Relancé tel quel sur `main`, le script donnait
+985 réussis des deux côtés, 11 échoués des deux côtés, 25 ignorés et 24 non lancés. Ces 60 tests
+venaient de l'environnement, et sont maintenant lancés :
 
-## Suite
+- **11 échecs de `test_cli.py`** (`FileNotFoundError`) : la commande `pyproj` du venv n'était pas
+  sur le `PATH` ;
+- **24 tests ignorés** faute de shapely (21), xarray (2) et pandas (1), dépendances de test de
+  pyproj (`pyproject.toml`, groupe `test`), désormais installées et épinglées ;
+- **24 tests `network` désélectionnés** (`-m "not network"`) : `cdn.proj.org` répond par le proxy,
+  ils tournent ;
+- la référence était compilée **sans TIFF ni curl** : `test_transformer_group__download_grids`
+  échouait aussi avec PROJ (`pipeline: Bad step definition: inv (File not found or invalid)` sur
+  le `.tif` téléchargé). D'où la référence avec TIFF et curl, et notre bibliothèque avec
+  `network`.
 
-Un lot par point, dans l'ordre : 1, 4, 3, puis 5 à 8. Ensuite, le même exercice sur GDAL, qui
-utilise l'API C de PROJ plus largement, mais dont la compilation coûte bien plus cher.
+Le script préchargeait aussi à tort le `geodesic.c` de PROJ dans la passe proj-rs : son test
+`nm -D ... | grep -q ' geod_init$'`, sous `set -o pipefail`, échouait quand `grep -q` fermait le
+tube avant la fin de `nm` (SIGPIPE), si bien que les `geod_*` mesurés étaient ceux de PROJ. Le
+préchargement est retiré ; le script exige que notre bibliothèque exporte `geod_init`, et les tests
+de `Geod` passent sur notre implémentation.
