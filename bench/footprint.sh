@@ -48,7 +48,7 @@ cc -O2 -o "$out/convert-capi" "$c" -I"$out/capi-dist/include" -L"$out/capi-dist/
 python3 tools/bench/footprint_measure.py \
   --proj-lib "$ref/build/lib" --proj-db "$ref/build/data/proj.db" \
   --proj-full-lib "$full/build/lib" --proj-full-db "$full/build/data/proj.db" \
-  --capi-lib "$out/capi-dist/lib/libproj.so.25" --rs-db "$root/data/proj.db" \
+  --capi-lib "$out/capi-dist/lib/libproj.so.25" --rs-db "$root/data/proj.pages" \
   --c-proj "$out/convert-proj" --c-proj-full "$out/convert-proj-full" --c-capi "$out/convert-capi" \
   --rs-bin "$out/cargo/release/footprint-rs" --rs-network-bin "$out/cargo-network/release/footprint-rs" \
   --rs-empty "$out/cargo/release/empty-rs" \

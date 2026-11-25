@@ -69,7 +69,8 @@ def file_entry(path, scratch, role):
 
 
 def contains(binary, db):
-    """True when the bytes of `db` sit unchanged inside `binary` (`include_bytes!`)."""
+    """True when the bytes of `db` (`data/proj.pages`, the compressed proj.db) sit unchanged inside
+    `binary` (`include_bytes!`)."""
     data, head = Path(binary).read_bytes(), Path(db).read_bytes()
     return data.find(head[:1 << 20]) >= 0 and data.find(head[-(1 << 20):]) >= 0
 
@@ -152,7 +153,7 @@ def measure_sizes(args, scratch):
                 {"items": ["proj.db, inside the program"], "bytes": db_bytes, "stripped_bytes": db_bytes}, libs,
                 note)
     return {"files": list(files.values()), "installs": installs, "embedded_db_bytes": db_bytes,
-            "empty_rust_program": empty}
+            "embedded_db_name": args.rs_db.name, "empty_rust_program": empty}
 
 
 def parse_output(text):
