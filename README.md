@@ -26,6 +26,9 @@ is the **same observable behavior as PROJ 9.9** on every ported operation,
 checked against PROJ's own test suite, behind an API that uses `Result` and
 enums instead of error codes and `NaN` sentinels.
 
+PROJ-RS is an independent project. It is not affiliated with, endorsed by or maintained by the
+PROJ project, its developers or OSGeo.
+
 It has three facades over one engine: a small native Rust API at the crate root, a
 drop-in for the [`proj`](https://github.com/georust/proj) crate (one line changed in
 `Cargo.toml`, no libproj to build or install), and a C API. The georust claim is checked
@@ -53,19 +56,23 @@ software written for libproj: see [Tried as libproj in real software](#tried-as-
 
 Our ledgers say proj-rs gives PROJ's answers; they do not say a real program written for libproj
 runs on it. So the C library of [`capi/`](capi) was put in place of PROJ 9.9.0's `libproj` (same
-soname, loaded by `LD_LIBRARY_PATH`) under the test suites of software of the field, each suite run
-twice, once with each library, offline and with the same data directory
-([`tools/clients/`](tools/clients)). Each line links to its sheet, with the method, the dates and
-the differences found.
+soname, loaded by `LD_LIBRARY_PATH`) under the test suites of software of the field. Each suite runs
+twice, once with each library, with the same data directory and the environment the suite expects
+([`tools/clients/`](tools/clients)), and the script fails if one outcome differs. Each run also
+proves which libproj it loaded (`ldd`, no `DT_RPATH`, `LD_DEBUG=libs`, and an interposer that counts
+the libproj calls of every process). Each line links to its sheet, with the method, the evidence and
+every remaining failure. The table gives the state of the last run.
 
-| Software | What ran | Verdict |
+| Software | What ran | Result with PROJ 9.9.0 and with proj-rs |
 |---|---|---|
-| [GRASS GIS 8.5.0](docs/CLIENTS-grass.md) | its `pytest` suite (`g.proj`, `r.proj`, `v.proj`, `r.latlong`, `m.proj` with our `cs2cs`) | 744 of 818 pass with both libraries, and each of the 818 tests has the same result; the 65 common failures come from the test environment. One difference at the first run (`r.latlong`, a pipeline with `+type=crs`), fixed |
-| [PostGIS 3.6.4](docs/CLIENTS-postgis.md) | `make check-regress`, PostgreSQL 16.15 server running on our library (raster left out) | 247 of 247 regression tests pass with both: 247 outputs identical to the expected text. No difference found |
-| [PDAL 2.10.2](docs/CLIENTS-pdal.md) | its whole `ctest` suite, PDAL and the system GDAL 3.8.4 both going through our library | 140 of 142 pass with both; the two others read remote files and fail offline with both. One difference at the first run (a WKT2 `DERIVEDPROJCRS`, read as a PROJ string, and a missing warning), fixed |
-| [pyproj 3.8.0](docs/CLIENTS-pyproj.md) | its test suite, offline, built against each library | Not a drop-in yet at the run of 2026-11-20: 985 tests pass with PROJ and 431 with proj-rs; of those that pass with PROJ, 276 fail with proj-rs and 278 do not run (a module that does not load). The sheet lists the causes in order; the first, `geodesic.h` not exported, is exported today ([Use from C](#use-from-c)). The run is to be redone |
-| [SpatiaLite 5.1.0](docs/CLIENTS-spatialite.md) | `make check` | 104 of 108 pass with both, and 0 of the 108 test logs differ; the 4 failures are the same on both sides. One difference at the first run (the error line of an unknown CRS), fixed |
-| [libgeotiff 1.7.4](docs/CLIENTS-libgeotiff.md) | `testlistgeo` and `testgeotifcp` on its 48 GeoTIFF files | 48 files listed and 46 with their corners on both sides, 0 differing lines. One difference at the first run (a polar stereographic with `lat_ts` at the pole and `k`), fixed |
+| [GRASS GIS 8.5.0](docs/CLIENTS-grass.md) | its `pytest` suite (`g.proj`, `r.proj`, `v.proj`, `r.latlong`, `m.proj` with our `cs2cs`) | 818 of 825 pass with both, each test with the same outcome. The other 7 are disabled in GRASS's source (`@pytest.mark.skip`, one test over 7 values of `nprocs`) and run nowhere |
+| [PostGIS 3.6.4](docs/CLIENTS-postgis.md) | `make check-regress`, PostgreSQL 16.15 server running on each library (raster left out) | 247 of 247 regression tests pass with both: 247 outputs identical to the expected text |
+| [PDAL 2.10.2](docs/CLIENTS-pdal.md) | its whole `ctest` suite, PDAL and the system GDAL 3.8.4 both going through the library under test | @PDAL@ |
+| [pyproj 3.8.0](docs/CLIENTS-pyproj.md) | its whole test suite, network tests included, built against each library | 1044 of 1045 tests (and their 192 subtests) pass with both, each with the same outcome. The last one is disabled in pyproj's source (`@pytest.mark.skip`, PROJ#2425) |
+| [GMT 6.5.0](docs/CLIENTS-gmt.md) | its `ctest` suite and examples, compared with GMT's 6.5.0 baseline images | 1230 of 1240 pass with PROJ, 1228 with proj-rs; 5900 output files compared and the libproj calls identical (28415 `proj_trans`). None of the tests that fail or differ calls libproj: dead external URLs (IRIS, Scripps), a revised USGS catalogue, a `grep` written for macOS, 3 image differences of 0.004 to 0.02 RMS, and a race in GMT's history file that changes the outcome between two runs with the same library |
+| [R 4.5.0: sf 1.1-3, terra 1.9-60](docs/CLIENTS-r.md) | the tests of sf (testthat included) and terra's tinytest, through GDAL 3.8.4 | 27 of 27 outputs identical: sf `[ FAIL 0 \| WARN 4 \| SKIP 28 \| PASS 806 ]` and terra "All ok, 981 results" with both, with the same 99 `Cannot open` lines |
+| [SpatiaLite 5.1.0](docs/CLIENTS-spatialite.md) | `make check`, against SQLite 3.42.0 | 105 of 108 pass with both, and 0 of the 108 test logs differ. The 3 others expect the error message of PROJ 9.1 to 9.4 (`crs not found`), to which PROJ 9.5 added the code (`crs not found: NONE:0`); with that message, they pass with both, 7241 cases each |
+| [libgeotiff 1.7.4](docs/CLIENTS-libgeotiff.md) | `testlistgeo`, `testgeotifcp` and `listgeo -proj4` on its 48 GeoTIFF files | 48 of 48 files listed with their corners by both, 0 differing lines (`testlistgeo` itself asks for no corners on 2 of them) |
 | [georust/proj 0.31.0](docs/CLIENTS-georust.md) | its unit tests and documentation examples, linked to our `libproj`, then written on the [facade](#drop-in-for-georust) | Linked: 26 of 26 tests and 24 of 24 examples, the same results as with PROJ. Facade: 24 of 26 tests (1 ignored, it builds a private struct; 1 deliberate deviation) and 24 of 24 examples |
 
 QGIS and GDAL's own test suites have not been run yet.
@@ -694,6 +701,11 @@ PROJ-RS is released under the [MIT license](LICENSE). It stands on the work of
 the PROJ authors, Charles Karney (geodesics), and Knud Poder and Karsten
 Engsager (exact Transverse Mercator). Third-party notices are in
 [NOTICE.md](NOTICE.md).
+
+PROJ-RS was written independently of the PROJ team, which took no part in it. The name PROJ is
+used only to say which library is ported and which one serves as the reference for comparison.
+PROJ-RS is not a release of PROJ and does not speak for its developers: report problems with
+PROJ-RS on this repository, not to the PROJ project.
 
 The embedded `proj.db` contains the EPSG Geodetic Parameter Dataset, owned by
 IOGP and subject to the [EPSG Dataset Terms of Use](https://epsg.org/terms-of-use.html):
