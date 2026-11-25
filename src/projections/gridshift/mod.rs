@@ -746,9 +746,17 @@ fn read_grid(name: &str) -> Result<Source, Fail> {
             .ok_or(Fail::Missing);
     };
     let file = Arc::new(Mutex::new(file));
-    let head = lock_file(&file)
-        .read_at(0, crate::network_chunks::CHUNK_SIZE)
-        .map_err(|_| Fail::Missing)?;
+    let opened = lock_file(&file).read_at(0, crate::network_chunks::CHUNK_SIZE);
+    let head = match opened {
+        Ok(head) => head,
+        Err(error) => {
+            // The read of a grid the callbacks should serve opens it as `NetworkFile::open`
+            // does: a network off or unavailable answers `Cannot open <url>: <error>` before
+            // the transform fails.
+            crate::network::not_opened(lock_file(&file).url(), &error);
+            return Err(Fail::Missing);
+        }
+    };
     if geotiff::is_tiff(&head) {
         if let Ok(Some(ifds)) = geotiff::load_remote(&file) {
             return Ok(Source::Tiles(ifds));

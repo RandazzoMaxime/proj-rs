@@ -86,6 +86,7 @@ pub mod iso19111;
 mod lcc;
 #[doc(hidden)]
 pub mod listing;
+mod log_channel;
 #[doc(hidden)]
 pub mod math;
 mod merc;
@@ -238,6 +239,7 @@ pub mod unstable {
     pub use crate::gie_api::{
         list_ellps, list_operations, list_prime_meridians, xy_dist, BatchError, Factors,
     };
+    pub use crate::log_channel::{log_sink, replace_log_sink, LogSink};
     pub use crate::network::{NetworkCallbacks, NetworkError, NetworkHandle, OpenReply};
     pub use crate::ported::{bench_definition, PORTED};
     pub use crate::proj::{

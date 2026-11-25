@@ -1957,7 +1957,9 @@ pub fn proj_string_refusal(definition: &str) -> Option<(i32, String)> {
         return frame_refusal(definition, &tokens)
             .map(|text| (crate::errno::PROJ_ERR_INVALID_OP_ILLEGAL_ARG_VALUE, text));
     }
-    let error = crate::engine::Operation::create_keeping_unknown(definition).err()?;
+    let error =
+        crate::log_channel::muted(|| crate::engine::Operation::create_keeping_unknown(definition))
+            .err()?;
     let name = if tokens.iter().any(|(key, _)| key == "step") {
         "pipeline"
     } else {
@@ -2047,7 +2049,9 @@ fn frame_refusal(definition: &str, tokens: &[(String, String)]) -> Option<String
     if tokens.iter().any(|(key, _)| key == "step") {
         return None;
     }
-    let error = crate::engine::Operation::create_keeping_unknown(definition).err()?;
+    let error =
+        crate::log_channel::muted(|| crate::engine::Operation::create_keeping_unknown(definition))
+            .err()?;
     let reason = frame_reason(&error, tokens)?;
     Some(format!(
         "Error 1027 (Invalid value for an argument): {}: {reason}",

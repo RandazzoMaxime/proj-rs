@@ -1691,7 +1691,7 @@ fn horizontal_grids(
         let Some(rank) = authority_kept(&auth, allowed) else {
             continue;
         };
-        if !crate::gridpath::available(&grid) {
+        if !crate::gridpath::known_available(&grid) {
             continue;
         }
         let forward = datum_listed(from_datums, &source_auth, &source_code)
@@ -1820,7 +1820,7 @@ fn vertical_step(
         if !datum_listed(&family, &datum_auth, &datum_code) {
             continue;
         }
-        if !crate::gridpath::available(&grid) {
+        if !crate::gridpath::known_available(&grid) {
             if accuracy < best_missing {
                 best_missing = accuracy;
             }
@@ -2398,6 +2398,51 @@ mod epsg_pipeline_tests {
         let (_, finland) = forward("EPSG:4123", "EPSG:2393", Coord::xy(60.1699, 24.9384));
         near(finland.x, 6_674_944.774_2, 1e-4, "ykj north");
         near(finland.y, 3_385_559.815_1, 1e-4, "ykj east");
+    }
+
+    /// `proj_create_crs_to_crs` of PROJ 9.9.0 with the network on attempts no network open for
+    /// this pair (`PROJ_GRID_AVAILABILITY_KNOWN_AVAILABLE`, `crs_to_crs.cpp:572-576`; 0 opens
+    /// counted by `capi/tests/network_listing.c` with the reference libproj): the grid of
+    /// `us_noaa_conus.tif` is opened when a point needs it, not when the pipeline is chosen.
+    #[test]
+    fn the_pipeline_of_a_pair_opens_no_grid_with_the_network_on() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+
+        use crate::{NetworkCallbacks, NetworkError, NetworkHandle, OpenReply};
+
+        struct Counting(AtomicUsize);
+        impl NetworkCallbacks for Counting {
+            fn open(&self, _: &str, _: u64, _: usize) -> Result<OpenReply, NetworkError> {
+                self.0.fetch_add(1, Ordering::Relaxed);
+                Err(NetworkError::Open(
+                    "Network functionality not available".to_owned(),
+                ))
+            }
+            fn read_range(
+                &self,
+                _: NetworkHandle,
+                _: u64,
+                _: usize,
+            ) -> Result<Vec<u8>, NetworkError> {
+                Err(NetworkError::ReadRange("unused".to_owned()))
+            }
+            fn close(&self, _: NetworkHandle) {}
+        }
+
+        let counting = Arc::new(Counting(AtomicUsize::new(0)));
+        let mut context = crate::network::GridContext::load();
+        let empty =
+            std::env::temp_dir().join(format!("proj-rs-crs-no-grid-{}", std::process::id()));
+        std::fs::create_dir_all(&empty).expect("empty search path");
+        context.replace_search_paths(vec![empty]);
+        context.enabled = true;
+        let imp: Arc<dyn NetworkCallbacks> = Arc::<Counting>::clone(&counting);
+        context.set_callbacks(crate::network::Callbacks::new(imp));
+        let (pipeline, _) =
+            crate::network::with_context(&context, || epsg_pipeline("EPSG:4267", "EPSG:4326"))
+                .expect("pipeline");
+        assert_eq!(counting.0.load(Ordering::Relaxed), 0, "{pipeline}");
     }
 
     #[test]

@@ -180,6 +180,36 @@ impl Ctx {
             util::text(found).map(PathBuf::from)
         });
     }
+
+    /// Points the message channel of this thread at the logger of the context at `owner`: what
+    /// PROJ sends to `pj_log` from inside a call, where the context is not at hand — the
+    /// `Cannot open <url>: <error>` of a grid the network cannot open — reaches the logger of the
+    /// context the call came with, as in PROJ. A sink is an address and a function: installing
+    /// one allocates nothing, and a nested entry point with the same context leaves it as it is.
+    /// `guard` puts the previous sink back when the entry point returns.
+    fn install_message_sink(owner: *mut Ctx) {
+        let owner = owner as usize;
+        let current = proj_rs::unstable::log_sink();
+        if current.map(|sink| sink.owner()) != Some(owner) {
+            proj_rs::unstable::replace_log_sink(Some(proj_rs::unstable::LogSink::new(
+                owner,
+                log_to_owner,
+            )));
+        }
+    }
+}
+
+/// The write function of the sink of [`Ctx::install_message_sink`]: `owner` is the address of a
+/// live `Ctx`.
+fn log_to_owner(owner: usize, message: &str) {
+    let context = owner as *const Ctx;
+    // SAFETY: `install_message_sink` is called by `context` at an entry point, with the context
+    // of that call (the default context, or one of `proj_context_create`, which the caller keeps
+    // alive for the whole call, proj.h); the `guard` of every entry point puts the previous sink
+    // back when it returns, and `proj_context_destroy` removes a sink pointing at the context it
+    // frees, so the sink is only reached during a call made with this context, while it exists.
+    // `log` reads the level, the errno and the logger of the context, and writes nothing.
+    unsafe { &*context }.log(PJ_LOG_ERROR as c_int, message);
 }
 
 struct DefaultContext(usize);
@@ -204,10 +234,12 @@ pub(crate) fn context<'a>(pointer: *const PJ_CONTEXT) -> &'a mut Ctx {
         pointer.cast_mut().cast::<Ctx>()
     };
     // The pointer is the default context, or one made by `proj_context_create`.
-    util::deref_mut(raw).unwrap_or_else(|| {
+    let context = util::deref_mut(raw).unwrap_or_else(|| {
         // Unreachable: `default_context` never returns NULL.
         std::process::abort()
-    })
+    });
+    Ctx::install_message_sink(raw);
+    context
 }
 
 /// The context of an object, the default one for `NULL`.
@@ -240,7 +272,11 @@ pub extern "C" fn proj_context_destroy(ctx: *mut PJ_CONTEXT) -> *mut PJ_CONTEXT 
         if ctx.is_null() || ctx.cast::<Ctx>() == default_context() {
             return std::ptr::null_mut();
         }
-        util::release(ctx.cast::<Ctx>());
+        let freed = ctx.cast::<Ctx>();
+        if proj_rs::unstable::log_sink().map(|sink| sink.owner()) == Some(freed as usize) {
+            proj_rs::unstable::replace_log_sink(None);
+        }
+        util::release(freed);
         std::ptr::null_mut()
     })
 }

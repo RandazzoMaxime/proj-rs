@@ -216,6 +216,11 @@ impl RemoteFile {
             .unwrap_or_else(PoisonError::into_inner)
     }
 
+    /// The URL this file reads, as `Cannot open <url>` names it.
+    pub(crate) fn url(&self) -> &str {
+        &self.url
+    }
+
     /// Up to `len` bytes from `offset`, fewer at the end of the file, as PROJ's
     /// `NetworkFile::read`: chunk after chunk, each from memory, then `cache.db`, else downloaded
     /// with the chunks after it ([`Self::fetch`]); the next chunks then come from the cache.

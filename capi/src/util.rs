@@ -11,7 +11,19 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 /// Runs `body`; a panic becomes `fallback`, so that it never crosses the C boundary.
 pub(crate) fn guard<T>(fallback: T, body: impl FnOnce() -> T) -> T {
     crate::module::register();
+    let _sink = SinkScope(proj_rs::unstable::log_sink());
     catch_unwind(AssertUnwindSafe(body)).unwrap_or(fallback)
+}
+
+/// Puts back, when an entry point returns (or unwinds), the message sink of the thread as it was
+/// when the entry point began: the sink `context` installs points at the context of the call, and
+/// no longer exists once the call is over, so it never outlives that context.
+struct SinkScope(Option<proj_rs::unstable::LogSink>);
+
+impl Drop for SinkScope {
+    fn drop(&mut self) {
+        proj_rs::unstable::replace_log_sink(self.0);
+    }
 }
 
 /// The text of a C string. `None` for `NULL` and for bytes that are not UTF-8.

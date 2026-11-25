@@ -6,6 +6,45 @@ rest is outside semver.
 
 ## Unreleased
 
+- R 4.5.0 with sf 1.1-3, terra 1.9-60 and lwgeom 0.2-17 runs as an eleventh real client
+  (`tools/clients/r.sh`, `docs/CLIENTS-r.md`): the 25 test scripts of sf and terra's tinytest
+  suite run once with the libproj of PROJ 9.9.0 and once with proj-rs, the dependencies pinned
+  by a dated CRAN snapshot, and the script fails when the two passes differ. The 25 outputs of
+  sf are identical and terra passes its 981 results on both sides; the passes still differ by
+  the count of `Cannot open` lines in terra's log (95 against 154), since PROJ caches the
+  answers of `lookForGridInfo` per context and proj-rs does not (`docs/CLIENTS-r.md`). Their paths through libproj found these gaps, each now compared with the reference libproj by
+  `capi/tests/run.sh network_listing missing_input`, `tests/network_listing.rs` and a unit test
+  of `src/crs.rs`:
+  - the sort of `proj_create_operations` (`PROJ_GRID_AVAILABILITY_USED_FOR_SORTING`) took a CDN
+    grid as available from its `proj.db` row, where PROJ opens it (`lookForGridInfo`): with the
+    network on and no grid, `EPSG:4326` to `EPSG:5070` under `PJ_CRS_EXTENT_NONE` (terra's
+    `proj_pipelines` default) listed grid operations ahead of the Helmerts of Hawaii and Alaska.
+    `gridpath::available` now opens; the building of a pair, of a pipeline and of an
+    instantiability mark uses `gridpath::known_available`, which does not, so
+    `proj_create_crs_to_crs` still attempts no network open, as PROJ;
+  - the `Cannot open <url>: <error>` line of a failed network open went nowhere: it now reaches
+    the logger of the context of the call, once per open (47 and 49 lines for the two listings,
+    as PROJ), through a per-thread channel the C library points at its context for the time of
+    each entry point (`src/log_channel.rs`); it is not sent from inside the instantiation of a
+    PROJ string by `proj_create`, where PROJ keeps only the last error line, nor twice when a
+    failed point is replayed to find its message. A point whose grid does not open already gave
+    infinity and `PROJ_ERR_OTHER_NETWORK_ERROR`; it now logs that line too;
+  - `proj_list_get_count(NULL)` returned -1 instead of 0;
+  - the NULL and wrongly typed arguments of `proj_create_projected_crs`,
+    `proj_create_derived_projected_crs`, `proj_create_derived_geographic_crs`,
+    `proj_create_geographic_crs_from_datum`, `proj_create_geocentric_crs_from_datum`,
+    `proj_crs_create_bound_vertical_crs` and `proj_create_operations` give PROJ's object, errno
+    and line (35 calls): `missing required input` with `PROJ_ERR_OTHER_API_MISUSE` for a NULL
+    where PROJ says so, `Missing input datum_or_datum_ensemble` for the two datum constructors,
+    NULL with nothing logged for a wrong type where PROJ logs nothing, and PROJ's own text
+    otherwise (`vert_crs is not a VerticalCRS`, `source_crs is not a CRS or a
+    CoordinateMetadata`...).
+- GMT 6.5.0 runs as a tenth real client (`tools/clients/gmt.sh`, `docs/CLIENTS-gmt.md`): its 1180
+  test scripts run once with the libproj of PROJ 9.9.0 and once with proj-rs. GMT reaches libproj
+  through GDAL alone (`-J+proj=...` becomes an `OGRCreateCoordinateTransformation`, GeoTIFF SRS,
+  raster extents); the two passes give the same verdict for each test and 0 file that differs out
+  of the 3894 written, the ~1000 PostScript compared rendered at the RMS limit of GMT's own
+  harness.
 - Memory: the read-only `proj.db` embedded in proj-rs has no triggers (`data/proj-triggers.sql` holds
   them and writable copies replay them). Creating a transform peaks at about 2.5 MiB less, and starts
   faster. The embedded database is stored compressed, page by page (`data/proj.pages`): the binary

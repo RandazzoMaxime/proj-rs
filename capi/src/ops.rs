@@ -307,14 +307,30 @@ pub extern "C" fn proj_create_operations(
         ) else {
             context.fail(
                 PROJ_ERR_OTHER_API_MISUSE as c_int,
-                "proj_create_operations: missing argument",
+                "proj_create_operations: missing required input",
             );
             return std::ptr::null_mut();
         };
-        let (Some(from), Some(to)) = (
-            source.obj.as_ref().and_then(Obj::crs),
-            target.obj.as_ref().and_then(Obj::crs),
-        ) else {
+        // `source_crs is not a CRS or a CoordinateMetadata` (`c_api.cpp:8581-8605`), through
+        // `proj_log_error`. A coordinate metadata carries an epoch here, which the factory of this
+        // library does not take: NULL, as before.
+        let mut crs = [None, None];
+        for (slot, (object, role)) in crs
+            .iter_mut()
+            .zip([(source, "source_crs"), (target, "target_crs")])
+        {
+            let found = object.obj.as_ref();
+            *slot = found.and_then(Obj::crs);
+            let metadata = matches!(found, Some(Obj::User(UserObject::CoordinateMetadata(_))));
+            if slot.is_none() && !metadata {
+                context.fail_unless_set(
+                    PROJ_ERR_OTHER as c_int,
+                    &format!("proj_create_operations: {role} is not a CRS or a CoordinateMetadata"),
+                );
+                return std::ptr::null_mut();
+            }
+        }
+        let [Some(from), Some(to)] = crs else {
             context.fail(
                 PROJ_ERR_OTHER_API_MISUSE as c_int,
                 "proj_create_operations: not a CRS",
