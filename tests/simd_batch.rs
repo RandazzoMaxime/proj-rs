@@ -5,10 +5,11 @@
 //! - avec `cs2cs` 9.9.0, qui est la référence : les valeurs attendues sont celles que PROJ
 //!   calcule, pas celles du code testé ;
 //! - avec le chemin scalaire de la crate, point par point, sur des tailles et des positions de
-//!   voie qui exercent la queue et le repli scalaire d'un groupe de quatre.
+//!   voie qui exercent la queue et le repli scalaire d'un groupe vectoriel.
 //!
-//! Les lots AVX2 s'écartent du scalaire de l'erreur des fonctions mathématiques vectorielles
-//! (quelques ULP). Les bornes ci-dessous sont celles que cet écart respecte, avec de la marge.
+//! Les lots vectoriels (AVX-512 en 8 voies, AVX2 en 4) s'écartent du scalaire de l'erreur des
+//! fonctions mathématiques vectorielles (quelques ULP). Les bornes ci-dessous sont celles que cet
+//! écart respecte, avec de la marge.
 
 use proj_rs::{Cone, Ellipsoid, Hemisphere, Lcc, Mercator, Tmerc, UtmZone};
 use std::io::Write;
@@ -238,8 +239,17 @@ fn every_length_is_converted() {
     }
 }
 
+/// Le nombre de voies d'un groupe du chemin par lots de cette machine.
+fn lanes_of_a_group() -> usize {
+    match proj_rs::batch_path() {
+        "avx512" => 8,
+        "avx2" | "neon" => 4,
+        _ => 1,
+    }
+}
+
 /// Des valeurs que le noyau vectoriel ne traite pas (non finies, latitude hors de ±90°) : le
-/// groupe entier passe par le scalaire, et ses quatre points valent ceux du scalaire au bit près.
+/// groupe entier passe par le scalaire, et ses points valent ceux du scalaire au bit près.
 #[test]
 fn a_group_with_an_unusual_lane_matches_the_scalar_path_exactly() {
     let unusual = [
@@ -251,17 +261,18 @@ fn a_group_with_an_unusual_lane_matches_the_scalar_path_exactly() {
         (3.0, -90.5),
         (3.0, 1e9),
     ];
+    let lanes = lanes_of_a_group();
     for case in cases() {
         let (lon, lat) = sample(11, 64, case.domain);
         for &(bad_lon, bad_lat) in &unusual {
-            for phase in 0..4 {
+            for phase in 0..lanes {
                 // Le point inhabituel prend chaque position de voie d'un groupe.
                 let mut lon = lon.clone();
                 let mut lat = lat.clone();
                 lon[8 + phase] = bad_lon;
                 lat[8 + phase] = bad_lat;
                 let (east, north) = run(&case.forward_batch, &lon, &lat);
-                for index in 8..12 {
+                for index in 8..8 + lanes {
                     let want = (case.forward)(lon[index], lat[index]);
                     let got = (east[index], north[index]);
                     match want {
@@ -351,13 +362,20 @@ fn an_unusual_input_of_the_inverse_gives_nan_like_the_scalar_path() {
     }
 }
 
-/// Sur un processeur AVX2 le lot prend le chemin vectoriel : sans ce garde, un repli silencieux
-/// sur le scalaire ferait passer tous les autres tests sans rien vérifier du noyau vectoriel.
+/// Sur un processeur x86-64 le lot prend le chemin vectoriel le plus large compilé et détecté :
+/// sans ce garde, un repli silencieux sur le scalaire ferait passer tous les autres tests sans
+/// rien vérifier du noyau vectoriel.
 #[cfg(target_arch = "x86_64")]
 #[test]
-fn the_vector_path_is_taken_on_an_avx2_processor() {
-    let expected = if std::is_x86_feature_detected!("avx2") && std::is_x86_feature_detected!("fma")
-    {
+fn the_vector_path_is_taken_on_an_x86_64_processor() {
+    let avx512_hw = std::is_x86_feature_detected!("avx512f")
+        && std::is_x86_feature_detected!("avx512cd")
+        && std::is_x86_feature_detected!("avx512bw")
+        && std::is_x86_feature_detected!("avx512dq")
+        && std::is_x86_feature_detected!("avx512vl");
+    let expected = if avx512_hw && proj_rs::AVX512_COMPILED {
+        "avx512"
+    } else if std::is_x86_feature_detected!("avx2") && std::is_x86_feature_detected!("fma") {
         "avx2"
     } else {
         "portable"
@@ -470,8 +488,8 @@ fn batches_match_cs2cs() {
         return;
     };
     for case in cases() {
-        // Avec un chemin du lot (AVX2) et avec le repli : la tranche est assez longue pour que
-        // la plupart des groupes passent par le noyau vectoriel.
+        // Avec un chemin du lot (vectoriel) et avec le repli : la tranche est assez longue pour
+        // que la plupart des groupes passent par le noyau vectoriel.
         let (lon, lat) = sample(13, 2_003, case.domain);
         let (east, north) = run(&case.forward_batch, &lon, &lat);
         let (want_east, want_north) = cs2cs(&program, "9", case.geographic, case.proj, &lon, &lat);

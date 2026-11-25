@@ -386,6 +386,7 @@ version = "1.2.5"
 dependencies = [
  "cc",
  "geo-types",
+ "miniz_oxide",
  "native-tls",
  "pulp",
  "rusqlite",

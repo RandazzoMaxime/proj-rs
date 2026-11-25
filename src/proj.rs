@@ -432,7 +432,7 @@ pub struct Proj {
 }
 
 /// Points a slice conversion hands to the transform at a time.
-const FILL_CHUNK: usize = 4096;
+const FILL_CHUNK: usize = 1024;
 
 /// Fewer points than this go through the transform one at a time. The vector path costs about
 /// 90 ns a call (the blocks, the kernels' setup) and a vector kernel has little to amortise it
@@ -997,7 +997,8 @@ impl Proj {
     ///
     /// The slice goes through the transform at once, so a projection with a vector kernel
     /// (Transverse Mercator and UTM, Lambert conformal conic, Mercator, see
-    /// [`batch_path`](crate::batch_path)) converts four points at a time. Its values agree with
+    /// [`batch_path`](crate::batch_path)) converts several points at a time (four on AVX2 and
+    /// NEON, eight on AVX-512). Its values agree with
     /// [`Self::convert`] to about 1e-8 m (the error of the vector math functions), and are the
     /// same bits for a transform with no vector kernel.
     ///
@@ -1009,7 +1010,7 @@ impl Proj {
     /// [`ProjError`] when any point fails: the error [`Self::convert`] gives for the first
     /// failing point. A coordinate that cannot be read as an `f64` is refused first, with
     /// the slice untouched. After a transform error the slice is **partly converted**: the blocks
-    /// before the first one that holds a failing point (4096 points each, a detail that may
+    /// before the first one that holds a failing point (1024 points each, a detail that may
     /// change) are converted, and that block and the ones after it keep their input. Do not use
     /// the slice after an `Err`. A converted value that does not fit the type of the slice
     /// (`f32`) leaves its point unchanged and gives an error once every block has run.

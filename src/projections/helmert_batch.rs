@@ -2,12 +2,12 @@
 //!
 //! Sans taux (`dx`, `drx`, `ds`…), la matrice, l'échelle et les translations ne dépendent pas
 //! du point : le scalaire les refait pourtant à chaque point (`rotation_matrix`). Ici ils sont
-//! calculés une fois à la création, et un morceau de points passe par un noyau à quatre voies
+//! calculés une fois à la création, et un morceau de points passe par un noyau à `N` voies
 //! qui suit `spatial_kernel` opération par opération. Une transformation à taux, ou la
 //! variante plane (`theta`), garde la boucle scalaire.
 
 use super::{rotation_matrix, Coord, EpochShift, Law, TransformError};
-use crate::simd::{run3, Lanes3};
+use crate::simd::{run3, Lanes3, Vector};
 
 const CHUNK: usize = 256;
 
@@ -98,15 +98,15 @@ impl Lanes3 for Forward {
 
     #[cfg(simd_lanes)]
     #[inline(always)]
-    fn lanes(
+    fn lanes<V: Vector<N>, const N: usize>(
         &self,
-        tok: crate::simd::Token,
-        x: crate::simd::V4,
-        y: crate::simd::V4,
-        z: crate::simd::V4,
-    ) -> Option<(crate::simd::V4, crate::simd::V4, crate::simd::V4)> {
+        tok: V::Token,
+        x: V,
+        y: V,
+        z: V,
+    ) -> Option<(V, V, V)> {
         let fixed = &self.0;
-        let k = |value| crate::simd::V4::splat(tok, value);
+        let k = |value| V::splat(tok, value);
         let m = &fixed.matrix;
         let u = x - k(fixed.reference[0]);
         let v = y - k(fixed.reference[1]);
@@ -127,15 +127,15 @@ impl Lanes3 for Inverse {
 
     #[cfg(simd_lanes)]
     #[inline(always)]
-    fn lanes(
+    fn lanes<V: Vector<N>, const N: usize>(
         &self,
-        tok: crate::simd::Token,
-        x: crate::simd::V4,
-        y: crate::simd::V4,
-        z: crate::simd::V4,
-    ) -> Option<(crate::simd::V4, crate::simd::V4, crate::simd::V4)> {
+        tok: V::Token,
+        x: V,
+        y: V,
+        z: V,
+    ) -> Option<(V, V, V)> {
         let fixed = &self.0;
-        let k = |value| crate::simd::V4::splat(tok, value);
+        let k = |value| V::splat(tok, value);
         let m = &fixed.matrix;
         let u = (x - k(fixed.translation[0])) / k(fixed.factor);
         let v = (y - k(fixed.translation[1])) / k(fixed.factor);

@@ -9,7 +9,19 @@ use std::time::Duration;
 use rusqlite::backup::Backup;
 use rusqlite::{Connection, OpenFlags};
 
-const PROJ_DB: &[u8] = include_bytes!("../data/proj.db");
+const PROJ_PAGES: &[u8] = include_bytes!("../data/proj.pages");
+/// The 38 triggers of `proj.db`, left out of the image: SQLite parses them at every load of the
+/// schema, about 2.7 MiB of heap for a read. A writable copy replays them (`tools/proj-db`).
+const PROJ_TRIGGERS: &str = include_str!("../data/proj-triggers.sql");
+
+/// The `CREATE TRIGGER` statements left out of the embedded image, each ending in `;`, in the
+/// order of `proj.db`.
+pub(crate) fn trigger_statements() -> impl Iterator<Item = &'static str> {
+    PROJ_TRIGGERS
+        .split_inclusive("END;\n")
+        .map(str::trim)
+        .filter(|statement| !statement.is_empty())
+}
 
 /// Opening the embedded database failed, or a query did.
 #[derive(Debug)]
@@ -39,19 +51,27 @@ fn open_embedded() -> Result<Mutex<Connection>, String> {
         .map_err(|error| error.to_string())
 }
 
-/// The embedded bytes as a read-only image. On Linux the connection reads them from the
-/// executable file with `pread` (`projdb_exe`), so the pages stay out of the resident set. Else
-/// it reads the pages of the binary in place: `mmap_size` keeps SQLite from copying each page it
-/// reads into its cache.
+/// The embedded database as a read-only connection. Its pages are decompressed as they are read
+/// (`projdb_exe`). When that VFS is not available, the whole image is decompressed in memory.
 fn read_only_image() -> Result<Connection, rusqlite::Error> {
-    #[cfg(target_os = "linux")]
-    if let Some(connection) = crate::projdb_exe::open(PROJ_DB) {
+    if let Some(connection) = crate::projdb_exe::open(PROJ_PAGES) {
         return Ok(connection);
     }
     let mut connection = Connection::open_in_memory()?;
-    connection.deserialize_bytes(rusqlite::MAIN_DB, PROJ_DB)?;
+    deserialize_embedded(&mut connection, rusqlite::MAIN_DB)?;
     connection.pragma_update(None, "mmap_size", MMAP_SIZE)?;
     Ok(connection)
+}
+
+/// Copy the whole embedded database, read-only, into `schema` of `connection`: the one path that
+/// needs the image in memory (`DatabaseContext::create_with_auxiliary` without a path).
+pub(crate) fn deserialize_embedded(
+    connection: &mut Connection,
+    schema: impl rusqlite::Name,
+) -> Result<(), rusqlite::Error> {
+    let image = crate::projdb_exe::decode_all(PROJ_PAGES).ok_or(rusqlite::Error::InvalidQuery)?;
+    let size = image.len();
+    connection.deserialize_read_exact(schema, std::io::Cursor::new(&image[..]), size, true)
 }
 
 const MMAP_SIZE: i64 = 1 << 30;
@@ -141,6 +161,7 @@ fn attach_aux(connection: &Connection) -> Result<(), rusqlite::Error> {
 /// insert session writes to it and rolls the writes back.
 fn copy_into(source: &Connection, mut target: Connection) -> Result<Connection, rusqlite::Error> {
     Backup::new(source, &mut target)?.run_to_completion(i32::MAX, Duration::ZERO, None)?;
+    target.execute_batch(PROJ_TRIGGERS)?;
     Ok(target)
 }
 
@@ -186,11 +207,6 @@ fn open_lazy_or_copy() -> Result<Connection, DbFail> {
 /// A read-only connection of its own to the embedded `proj.db`, with no auxiliary database.
 pub(crate) fn read_only_connection() -> Result<Connection, DbFail> {
     read_only_image().map_err(|error| DbFail::Open(error.to_string()))
-}
-
-/// The bytes of the embedded `proj.db`.
-pub(crate) fn embedded_bytes() -> &'static [u8] {
-    PROJ_DB
 }
 
 /// A private, writable connection to the embedded `proj.db`.
@@ -271,5 +287,30 @@ impl Held {
 impl Drop for Held {
     fn drop(&mut self) {
         HELD.with(|held| held.set(false));
+    }
+}
+
+#[cfg(test)]
+mod trigger_tests {
+    use super::*;
+
+    fn triggers(connection: &Connection) -> i64 {
+        connection
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("count")
+    }
+
+    #[test]
+    fn the_read_image_has_no_triggers_and_a_writable_copy_has_them_all() {
+        let image = read_only_image().expect("image");
+        assert_eq!(triggers(&image), 0);
+        let copy = open_memory().expect("copy");
+        let written =
+            i64::try_from(PROJ_TRIGGERS.matches("CREATE TRIGGER").count()).expect("count");
+        assert_eq!(triggers(&copy), written);
     }
 }

@@ -257,7 +257,9 @@ Ce que le code fait autrement que ce document, ou en plus, et pourquoi.
   avait déclaré 1.100 parce que le code utilisait des méthodes plus récentes (`f64::next_up`,
   1.86 ; `slice::as_chunks`, 1.88 ; `is_multiple_of`, 1.91) : elles sont remplacées par des
   équivalents (`src/compat.rs`) et le plancher est revenu à 1.83.
-  `cargo +1.83.0 check --workspace --lib --bins --all-features` passe ; avec 1.82.0
+  `cargo +1.83.0 check --workspace --lib --bins` passe avec toutes les features sauf `avx512`
+  (le chemin AVX-512 utilise les types AVX-512 de `std::arch`, stables depuis 1.89 ; le job `msrv`
+  l'exclut de sa liste de features) ; avec 1.82.0
   (`--ignore-rust-version`) les binaires `cct` et `cs2cs` échouent (`ExitCode` n'est comparable
   avec `!=` que depuis 1.83 ; les dépendances exigent au moins 1.81, `half`). Le job `msrv` de la
   CI installe la version déclarée : il garde le plancher. La release se construit avec 1.100

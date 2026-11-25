@@ -1,8 +1,8 @@
-//! `cart` par lots : `geodetic_to_cartesian` et `cartesian_to_geodetic` en quatre voies.
+//! `cart` par lots : `geodetic_to_cartesian` et `cartesian_to_geodetic` en `N` voies.
 //!
 //! `fwd_prepare` et la remise des unités restent ceux du scalaire, point par point ; seul le
 //! calcul tourne sur un morceau. Un point que `prepare_forward` refuse garde l'erreur du
-//! scalaire. Un groupe de quatre qu'une voie sort du domaine du noyau (valeur non finie, pôle,
+//! scalaire. Un groupe de `N` qu'une voie sort du domaine du noyau (valeur non finie, pôle,
 //! `cos φ < 1e-6`) passe par [`geodetic_to_cartesian`] et [`cartesian_to_geodetic`] : ses points
 //! valent ceux du chemin scalaire.
 
@@ -11,7 +11,7 @@ use super::{
     prepare_forward, CartStep, Coord, TransformError, BATCH_CHUNK,
 };
 use crate::ellipsoid::Ellipsoid;
-use crate::simd::{run3, Lanes3};
+use crate::simd::{run3, Lanes3, Vector};
 
 struct Forward(Ellipsoid);
 
@@ -24,13 +24,13 @@ impl Lanes3 for Forward {
 
     #[cfg(simd_lanes)]
     #[inline(always)]
-    fn lanes(
+    fn lanes<V: Vector<N>, const N: usize>(
         &self,
-        tok: crate::simd::Token,
-        lam: crate::simd::V4,
-        phi: crate::simd::V4,
-        height: crate::simd::V4,
-    ) -> Option<(crate::simd::V4, crate::simd::V4, crate::simd::V4)> {
+        tok: V::Token,
+        lam: V,
+        phi: V,
+        height: V,
+    ) -> Option<(V, V, V)> {
         vector::forward(self.0, tok, lam, phi, height)
     }
 }
@@ -42,13 +42,13 @@ impl Lanes3 for Inverse {
 
     #[cfg(simd_lanes)]
     #[inline(always)]
-    fn lanes(
+    fn lanes<V: Vector<N>, const N: usize>(
         &self,
-        tok: crate::simd::Token,
-        x: crate::simd::V4,
-        y: crate::simd::V4,
-        z: crate::simd::V4,
-    ) -> Option<(crate::simd::V4, crate::simd::V4, crate::simd::V4)> {
+        tok: V::Token,
+        x: V,
+        y: V,
+        z: V,
+    ) -> Option<(V, V, V)> {
         vector::inverse(self.0, tok, x, y, z)
     }
 }
@@ -153,18 +153,18 @@ pub(super) fn inverse(
 #[cfg(simd_lanes)]
 mod vector {
     use crate::ellipsoid::Ellipsoid;
-    use crate::simd::{Token, V4};
+    use crate::simd::{Mask, Vector, VectorMath};
 
-    /// [`super::geodetic_to_cartesian`] sur quatre points.
+    /// [`super::geodetic_to_cartesian`] sur `N` points.
     #[inline(always)]
-    pub(super) fn forward(
+    pub(super) fn forward<V: Vector<N>, const N: usize>(
         earth: Ellipsoid,
-        tok: Token,
-        lam: V4,
-        phi: V4,
-        height: V4,
-    ) -> Option<(V4, V4, V4)> {
-        let k = |value| V4::splat(tok, value);
+        tok: V::Token,
+        lam: V,
+        phi: V,
+        height: V,
+    ) -> Option<(V, V, V)> {
+        let k = |value| V::splat(tok, value);
         if !lam
             .is_finite()
             .and(phi.is_finite())
@@ -185,16 +185,16 @@ mod vector {
         Some((radius * cos_lam, radius * sin_lam, z))
     }
 
-    /// [`super::cartesian_to_geodetic`] sur quatre points.
+    /// [`super::cartesian_to_geodetic`] sur `N` points.
     #[inline(always)]
-    pub(super) fn inverse(
+    pub(super) fn inverse<V: Vector<N>, const N: usize>(
         earth: Ellipsoid,
-        tok: Token,
-        x: V4,
-        y: V4,
-        z: V4,
-    ) -> Option<(V4, V4, V4)> {
-        let k = |value| V4::splat(tok, value);
+        tok: V::Token,
+        x: V,
+        y: V,
+        z: V,
+    ) -> Option<(V, V, V)> {
+        let k = |value| V::splat(tok, value);
         let b_div = 1.0 - earth.flattening();
         let (x_div, y_div, z_div) = (x * k(earth.ra()), y * k(earth.ra()), z * k(earth.ra()));
         let p_div = x_div.mul_add(x_div, y_div * y_div).sqrt();

@@ -155,7 +155,17 @@ pub(crate) fn create(ctx: *mut PJ_CONTEXT, definition: &str, who: &str) -> *mut 
         return std::ptr::null_mut();
     }
     let init_step = proj_string && is_init_step(definition);
-    let engine = context.builder().proj(definition);
+    // `createFromPROJString` instantiates a PROJ string under a logger of its own that keeps the
+    // last error line alone (io.cpp:12761-12810): a `Cannot open <url>` from that instantiation
+    // does not reach the logger of the context.
+    let engine = if proj_string {
+        let sink = proj_rs::unstable::replace_log_sink(None);
+        let built = context.builder().proj(definition);
+        proj_rs::unstable::replace_log_sink(sink);
+        built
+    } else {
+        context.builder().proj(definition)
+    };
     // PROJ instantiates a PROJ string before it makes the object (io.cpp:12799): an operation
     // or a CRS the engine cannot build in this context gives no object, and the code of
     // `pj_init` stays on the context. A success clears it. `init=epsg:` is read before.

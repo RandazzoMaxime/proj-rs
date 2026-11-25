@@ -88,10 +88,9 @@ export PROJ_RS_LIBPROJ_DIR=$PWD/target/proj-reference/build/lib
 BENCH_MACHINE=my-box BENCH_ROUNDS=5 taskset -c 2 sh bench/record.sh
 ```
 
-The script appends a line to `bench/history.jsonl`, draws
-`bench/trend-<machine>-{light,dark}.svg` and rewrites the "How fast" and "Over
-time" blocks of the README (`tools/bench/how_fast.py`, `tools/bench/trend_svg.py`).
-Compare only lines with the same `machine`.
+The script appends a line to `bench/history.jsonl`, rewrites the "How fast" block of the
+README and draws the speed cards of `bench/cards/` (`tools/bench/how_fast.py`,
+`tools/bench/cards.py`). Compare only lines with the same `machine`.
 
 ## Size and memory
 
@@ -147,8 +146,9 @@ Five installs, in bytes on disk after `strip --strip-unneeded`:
 lists for it, transitively, except the C library and the unwinder that any Linux system has:
 `libc`, `libm`, `libdl`, `libpthread`, `librt`, `libutil`, `libgcc_s` and the loader. The rule
 is the same on both sides. A library counts with its real file, not the symlink. `proj.db` counts
-in full: as a file for PROJ, and as the bytes inside the binary for proj-rs (`include_bytes!`;
-the script checks that the bytes are there unchanged). The Rust programs have SQLite built in
+in full: as a file for PROJ, and for proj-rs as the bytes inside the binary, which are the database
+compressed page by page (`data/proj.pages`, `include_bytes!`; the script checks that the bytes are
+there unchanged, see [PORTING-memory.md](PORTING-memory.md)). The Rust programs have SQLite built in
 (`rusqlite` `bundled`); on the PROJ side `libsqlite3` is a dependency and counts. The libraries
 come from this machine's distribution, so their sizes depend on it.
 

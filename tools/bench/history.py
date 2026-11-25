@@ -1,6 +1,5 @@
 """Shared reading of bench/history.jsonl for the scripts of tools/bench."""
 import json
-import re
 from datetime import datetime
 from pathlib import Path
 
@@ -25,17 +24,6 @@ def load():
     return rows
 
 
-def by_machine(rows):
-    machines = {}
-    for row in rows:
-        machines.setdefault(row["machine"], []).append(row)
-    return dict(sorted(machines.items()))
-
-
-def slug(machine):
-    return re.sub(r"[^A-Za-z0-9._-]+", "-", machine)
-
-
 def parse(date):
     return datetime.strptime(date, "%Y-%m-%dT%H:%M:%SZ")
 
@@ -47,15 +35,6 @@ def day(date):
 
 def day_time(date):
     return f"{day(date)} {parse(date):%H:%M}"
-
-
-def ns_text(value):
-    """Three significant digits, with the unit that keeps the number short."""
-    if value >= 1e6:
-        return f"{value / 1e6:.3g} ms"
-    if value >= 1e3:
-        return f"{value / 1e3:.3g} µs"
-    return f"{value:.3g} ns"
 
 
 def replace_block(text, name, body):

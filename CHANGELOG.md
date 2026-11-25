@@ -20,6 +20,59 @@ rest is outside semver.
   `unknown` ellipsoid from the numbers (`grdproject/units`, reproduced with `projinfo -o
   WKT1_GDAL "+proj=longlat +a=6378137 +b=6356752.314 +datum=WGS84 +type=crs"`). 18 files differ
   between two runs with the same library (GMT is not deterministic there) and are listed apart.
+- R 4.5.0 with sf 1.1-3, terra 1.9-60 and lwgeom 0.2-17 runs as an eleventh real client
+  (`tools/clients/r.sh`, `docs/CLIENTS-r.md`): the 25 test scripts of sf and terra's tinytest
+  suite run once with the libproj of PROJ 9.9.0 and once with proj-rs, the dependencies pinned
+  by a dated CRAN snapshot, and the script fails when the two passes differ. The 25 outputs of
+  sf are identical and terra passes its 981 results on both sides; the passes still differ by
+  the count of `Cannot open` lines in terra's log (95 against 154), since PROJ caches the
+  answers of `lookForGridInfo` per context and proj-rs does not (`docs/CLIENTS-r.md`). Their paths through libproj found these gaps, each now compared with the reference libproj by
+  `capi/tests/run.sh network_listing missing_input`, `tests/network_listing.rs` and a unit test
+  of `src/crs.rs`:
+  - the sort of `proj_create_operations` (`PROJ_GRID_AVAILABILITY_USED_FOR_SORTING`) took a CDN
+    grid as available from its `proj.db` row, where PROJ opens it (`lookForGridInfo`): with the
+    network on and no grid, `EPSG:4326` to `EPSG:5070` under `PJ_CRS_EXTENT_NONE` (terra's
+    `proj_pipelines` default) listed grid operations ahead of the Helmerts of Hawaii and Alaska.
+    `gridpath::available` now opens; the building of a pair, of a pipeline and of an
+    instantiability mark uses `gridpath::known_available`, which does not, so
+    `proj_create_crs_to_crs` still attempts no network open, as PROJ;
+  - the `Cannot open <url>: <error>` line of a failed network open went nowhere: it now reaches
+    the logger of the context of the call, once per open (47 and 49 lines for the two listings,
+    as PROJ), through a per-thread channel the C library points at its context for the time of
+    each entry point (`src/log_channel.rs`); it is not sent from inside the instantiation of a
+    PROJ string by `proj_create`, where PROJ keeps only the last error line, nor twice when a
+    failed point is replayed to find its message. A point whose grid does not open already gave
+    infinity and `PROJ_ERR_OTHER_NETWORK_ERROR`; it now logs that line too;
+  - `proj_list_get_count(NULL)` returned -1 instead of 0;
+  - the NULL and wrongly typed arguments of `proj_create_projected_crs`,
+    `proj_create_derived_projected_crs`, `proj_create_derived_geographic_crs`,
+    `proj_create_geographic_crs_from_datum`, `proj_create_geocentric_crs_from_datum`,
+    `proj_crs_create_bound_vertical_crs` and `proj_create_operations` give PROJ's object, errno
+    and line (35 calls): `missing required input` with `PROJ_ERR_OTHER_API_MISUSE` for a NULL
+    where PROJ says so, `Missing input datum_or_datum_ensemble` for the two datum constructors,
+    NULL with nothing logged for a wrong type where PROJ logs nothing, and PROJ's own text
+    otherwise (`vert_crs is not a VerticalCRS`, `source_crs is not a CRS or a
+    CoordinateMetadata`...).
+- Memory: the read-only `proj.db` embedded in proj-rs has no triggers (`data/proj-triggers.sql` holds
+  them and writable copies replay them). Creating a transform peaks at about 2.5 MiB less, and starts
+  faster. The embedded database is stored compressed, page by page (`data/proj.pages`): the binary
+  is 7.6 MB smaller, creation takes about 9 ms more once per process, the conversions do not change.
+  See [docs/PORTING-memory.md](docs/PORTING-memory.md).
+- x86-64 has an AVX-512 batch path (8 lanes of `f64`, `src/simd/v8.rs`) behind the new `avx512`
+  cargo feature (off by default; also relayed by `proj-rs-georust`). On an AVX-512 CPU,
+  `batch_path()` gives `avx512` and every batch kernel runs 8 points at a time: Transverse
+  Mercator/UTM, Lambert conic, Mercator/Web Mercator, `laea`, `somerc`, `sterea`, `cart` and
+  Helmert, forward and inverse. The code is generic over the lane count (`Vector<N>` in
+  `src/simd/vec.rs`), so one formula runs on AVX2 (4 lanes), AVX-512 (8) and NEON with the same
+  bits per lane; only `asinh`/`atanh` differ between 4 and 8 lanes (their "all lanes small"
+  branch depends on the group), within the same ULP bounds. The feature needs Rust >= 1.89 (the
+  AVX-512 types of `std::arch`; `pulp/x86-v4` does not build below), so the MSRV (1.83) build
+  never enables it and the CI `msrv` job lists the features explicitly without `avx512`. Measured
+  on a Xeon 6985P-C with `proj-rs-bench`: batch conversions are 1.1x to 1.8x faster than the AVX2
+  path (e.g. UTM 31 forward batch 19.3 -> 10.8 ns/point), one-point calls unchanged. Tests:
+  digests per path in `src/simd/math.rs` and `tests/simd_bits.rs`/`tests/convert_array_golden.rs`
+  (a `GOLDEN_AVX512` table), batch-vs-scalar in `tests/simd_batch.rs` over all lane positions of
+  a group. See [docs/PORTING-simd.md](docs/PORTING-simd.md).
 
 ## 1.2.5
 
