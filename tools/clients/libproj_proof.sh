@@ -1,4 +1,4 @@
-# Proof of which libproj a pass of a client bench loads. Sourced by grass.sh, pdal.sh,
+# Proof of which libproj a pass of a client bench loads. Sourced by grass.sh, pdal.sh, pyproj.sh,
 # spatialite.sh and libgeotiff.sh, after `set -euo pipefail`; gmt.sh has its own copy of the
 # same checks.
 #

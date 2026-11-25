@@ -65,11 +65,21 @@ static unsigned long calls[C_COUNT];
 static unsigned long points[C_COUNT];
 static __thread int depth;
 
+static int find_proj(struct dl_phdr_info *info, size_t size, void *data);
+
 static void *next(int which) {
     static void *cache[C_COUNT];
     void *f = __atomic_load_n(&cache[which], __ATOMIC_ACQUIRE);
     if (f == NULL) {
         f = dlsym(RTLD_NEXT, NAMES[which]);
+        if (f == NULL) {
+            /* A libproj loaded with RTLD_LOCAL (the dependency of a Python extension module) is
+             * not in the global scope that RTLD_NEXT searches: look it up by its path. */
+            char lib[PATH_MAX] = "";
+            dl_iterate_phdr(find_proj, lib);
+            void *handle = lib[0] ? dlopen(lib, RTLD_LAZY | RTLD_NOLOAD) : NULL;
+            f = handle ? dlsym(handle, NAMES[which]) : NULL;
+        }
         if (f == NULL) {
             fprintf(stderr, "proj_count: no %s after the preload\n", NAMES[which]);
             abort();
