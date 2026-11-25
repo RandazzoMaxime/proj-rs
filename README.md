@@ -79,7 +79,7 @@ QGIS and GDAL's own test suites have not been run yet.
 Each square is **one test case of PROJ 9.9.0 itself**. Green: PROJ-RS passes it.
 Grey: still open. In all, <!--gen:all_percent-->100.0<!--/gen-->% of the cases pass
 (<!--gen:all_done-->9188<!--/gen--> of <!--gen:all_total-->9188<!--/gen-->). The left panel is the numeric suite (`gie`), complete. The right
-panel is what is left: PROJ's C++ unit tests, which cover the ISO 19111 model,
+panel, complete too, is PROJ's C++ unit tests, which cover the ISO 19111 model,
 WKT and the operation factory, and the command-line cases. The chart is drawn
 from the same ledgers as the tables below by `tests/progress_svg.rs`, so it
 cannot say more than the tests do.
