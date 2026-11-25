@@ -15,7 +15,9 @@
 # JSON schemas of json-schema.org) and pdal_io_copc_remote_reader_test
 # (github.com/PDAL/data/raw/..., directly and through GDAL's /vsicurl/). The script checks first
 # that those URLs answer, and says so when one does not: a failure of those tests then comes from
-# the network, not from libproj. Which libproj each pass loads is proven by libproj_proof.sh
+# the network, not from libproj. When github.com refuses the COPC file (a proxy that scopes GitHub
+# to some repositories), the test reads PDAL's own copy on S3 instead, once its sha256 is checked
+# against the Git LFS object id of the GitHub file: the same bytes, through the same code paths. Which libproj each pass loads is proven by libproj_proof.sh
 # (ldd, no DT_RPATH, LD_DEBUG=libs, the proj_count.c interposer for the whole ctest pass).
 set -euo pipefail
 
@@ -25,6 +27,9 @@ REMOTE_URLS=(
   https://s3-us-west-2.amazonaws.com/usgs-lidar-stac/ept/MD_GoldenBeach_2012.json
   https://github.com/PDAL/data/raw/refs/heads/main/autzen/autzen-classified.copc.laz
 )
+COPC_GITHUB=https://github.com/PDAL/data/raw/refs/heads/main/autzen/autzen-classified.copc.laz
+COPC_MIRROR=https://s3.amazonaws.com/hobu-lidar/autzen-classified.copc.laz
+COPC_LFS_OID=db2d56cdfa058bffccdc5d6019dae2fc9c6a551df10a5523c06c76a3e25a27fa
 # Processes of a ctest pass that call one of the functions proj_count.c counts (111 of them).
 MIN_CALLERS=100
 root=$(cd "$(dirname "$0")/../.." && pwd)
@@ -58,10 +63,24 @@ if [ -n "${HTTPS_PROXY:-${https_proxy:-}}" ] && [ -z "${HTTP_PROXY:-${http_proxy
   echo "arbiter proxy: $CURL_PROXY (split_proxy.py: CONNECT to ${HTTPS_PROXY:-$https_proxy}, plain HTTP direct)"
 fi
 
-for url in "${REMOTE_URLS[@]}" http://json-schema.org/draft-07/schema; do
-  code=$(curl -s -o /dev/null -r 0-99 -w '%{http_code}' ${CURL_PROXY:+-x "$CURL_PROXY"} "$url" || true)
+reachable() {
+  curl -s -o /dev/null -r 0-99 -w '%{http_code}' ${CURL_PROXY:+-x "$CURL_PROXY"} "$1" || true
+}
+copc_url=$COPC_GITHUB
+code=$(reachable "$COPC_GITHUB")
+case "$code" in
+  200|206|301|302) ;;
+  *)
+    echo "github.com refuses the COPC file (HTTP $code); checking PDAL's copy $COPC_MIRROR"
+    sum=$(curl -sS --fail ${CURL_PROXY:+-x "$CURL_PROXY"} "$COPC_MIRROR" | sha256sum | cut -d' ' -f1)
+    [ "$sum" = "$COPC_LFS_OID" ] || { echo "the copy does not match the LFS object of PDAL/data ($sum)" >&2; exit 1; }
+    echo "the copy matches the LFS object of PDAL/data (sha256 $sum): the test reads it"
+    copc_url=$COPC_MIRROR ;;
+esac
+for url in "${REMOTE_URLS[@]/$COPC_GITHUB/$copc_url}" http://json-schema.org/draft-07/schema; do
+  code=$(reachable "$url")
   case "$code" in
-    200|206|301) echo "remote test file reachable: $url" ;;
+    200|206|301|302) echo "remote test file reachable: $url" ;;
     *) echo "remote test file NOT reachable (HTTP $code): $url; the test that reads it fails on both sides" ;;
   esac
 done
@@ -69,6 +88,11 @@ done
 rm -rf "$work/src"
 git clone -q --depth 1 --branch "$TAG" https://github.com/PDAL/PDAL.git "$work/src" 2>/dev/null
 [ "$(git -C "$work/src" rev-parse HEAD)" = "$COMMIT" ] || { echo "$TAG is not $COMMIT" >&2; exit 1; }
+if [ "$copc_url" != "$COPC_GITHUB" ]; then
+  copc_test=$work/src/test/unit/io/CopcRemoteReaderTest.cpp
+  grep -qF "\"$COPC_GITHUB\"" "$copc_test" || { echo "$copc_test no longer reads $COPC_GITHUB" >&2; exit 1; }
+  sed -i "s|$COPC_GITHUB|$copc_url|" "$copc_test"
+fi
 
 prefix=$work/ref-prefix
 rm -rf "$prefix" "$work/build"
