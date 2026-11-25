@@ -5,7 +5,9 @@ Usage: gmt_compare.py WORKDIR BUILD GM REF_LIBDIR OURS_LIBDIR EXPECTED_TESTS PRO
 
 1. Every ctest entry must have an outcome in ctest-ref.log and in ctest-ours.log, EXPECTED_TESTS
    of them (`ctest -N`), and the same outcome on both sides; a test whose outcome differs goes
-   through the solo reruns of 2., on its gmtest exit status.
+   through the solo reruns of 2., on its gmtest exit status. Each log is the first ctest run
+   followed by its `--rerun-failed` runs: the last outcome of a test counts, and the tests a rerun
+   changed are listed (ctest-<side>-1.log is the first run alone).
 2. Every test directory (outputs-ref/ vs outputs-ours/; gmt.sh keeps the directory of passing
    tests too) must be on both sides, and every file in it must be the same: byte for byte, or
    once normalised (PostScript: the DSC date line and the temporary file names of the `%@GMT:`
@@ -22,8 +24,8 @@ Usage: gmt_compare.py WORKDIR BUILD GM REF_LIBDIR OURS_LIBDIR EXPECTED_TESTS PRO
    they agree, the difference is real and fails the comparison.
 3. The calls each test made into libproj (the proj_count.c logs of both passes) must be the
    same: the same number of calls and points per function. A test whose calls differ goes
-   through the same solo reruns (each solo run starts from an empty GMT user directory, so the
-   remote datasets it uses are downloaded and converted again, by that run alone).
+   through the same solo reruns (each solo run starts from a copy of the seed home directory, so
+   a remote dataset it uses beyond the seed is downloaded and converted again, by that run alone).
 Floors: fewer than MIN_TESTS outcomes or MIN_FILES compared files fails the comparison.
 
 Not compared: the PDFs (Ghostscript writes its creation date in them; they are converted from
@@ -130,8 +132,9 @@ def walk(d):
 
 
 class Solo:
-    """Reruns of one test alone, kept under WORKDIR/solo/. Each run starts from an empty GMT
-    user directory (at the path of the passes) and has its own proj_count.c log.
+    """Reruns of one test alone, kept under WORKDIR/solo/. Each run starts from a copy of the
+    seed home directory of gmt.sh (GMT_HOME_SEED, copied to GMT_HOME, the path of the passes) and
+    has its own proj_count.c log.
 
     `verdict` compares one aspect of the test (a file, the gmtest status, the libproj calls)
     across runs: 'agree' when the solo pair agrees; 'gmt' when two runs with the same library
@@ -153,15 +156,15 @@ class Solo:
             os.makedirs(os.path.dirname(log), exist_ok=True)
             if os.path.exists(log):
                 os.remove(log)
-            userdir = os.path.join(self.work, "userdir")
-            shutil.rmtree(userdir, ignore_errors=True)
-            os.makedirs(userdir)
+            home = os.environ["GMT_HOME"]
+            shutil.rmtree(home, ignore_errors=True)
+            shutil.copytree(os.environ["GMT_HOME_SEED"], home, symlinks=True)
             env = dict(os.environ)
             old = env.get("LD_LIBRARY_PATH")
             env["LD_LIBRARY_PATH"] = self.libdirs[lib] + (f":{old}" if old else "")
             env["LD_PRELOAD"] = self.preload
             env["PROJ_COUNT_LOG"] = log
-            env["GMT_USERDIR"] = userdir
+            env["HOME"] = home
             status = subprocess.run(["bash", os.path.join(self.build, "test", "gmtest"), test],
                                     cwd=os.path.join(self.build, "test"), env=env,
                                     capture_output=True, timeout=1800).returncode
@@ -276,6 +279,15 @@ def main():
         print(f"  floor: {expected} tests listed, {len(ref)}/{len(ours)} outcomes read "
               f"(at least {MIN_TESTS}, all of them)")
         failures.append("test floor")
+
+    for side, final in (("ref", ref), ("ours", ours)):
+        first_path = os.path.join(work, f"ctest-{side}-1.log")
+        first = outcomes(first_path) if os.path.isfile(first_path) else final
+        rerun = sorted(t for t in final if first.get(t) != final[t])
+        print(f"{side}: {len(rerun)} tests failed the first run and changed outcome on a rerun "
+              f"(ctest --rerun-failed, as GMT's CI)")
+        for t in rerun:
+            print(f"  {t}: {first.get(t)} then {final[t]}")
 
     calls = {}
     for side in ("ref", "ours"):

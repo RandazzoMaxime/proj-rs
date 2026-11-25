@@ -10,6 +10,31 @@ rest is outside semver.
   reads PDAL's copy on S3, once its sha256 matches the Git LFS object id of the GitHub file.
   PDAL 2.10.2 now passes 142 of 142 tests with PROJ 9.9.0 and with proj-rs.
 
+- The GMT 6.5.0 bench (`tools/clients/gmt.sh`, `docs/CLIENTS-gmt.md`) runs the suite as GMT's CI
+  does: the baseline images of the release (`baseline-images.zip`, each output checked against
+  the md5 of its `.dvc` file by `gmt_baselines.py`; the DVC remote refuses anonymous reads), the
+  packages and the configuration of `ci/` (long options, OpenMP, the `static` data server, the
+  examples; Release, where Debug writes uninitialised colours that Ghostscript refuses), GMT
+  installed on `PATH`, `gawk`, `RUNNER_OS=Linux` for the known failures, the remote datasets of
+  `ci-caches.yml` downloaded once into a home directory each pass starts from, and `ctest
+  --rerun-failed` twice. On `07edeec`: 1240 tests, 1230 pass with PROJ 9.9.0 and 1228 with
+  proj-rs, 5900 files compared, the libproj calls identical (28415 `proj_trans` in 18 tests), no
+  real difference; `grdproject/units` is now identical. The 4 outcomes that differ make no libproj
+  call and come from GMT (2 resolved by a solo pair, 2 that differ between two runs with one
+  library: `gmt.history` is emptied by `fopen("w")` before it is locked). The 10 failures of the
+  reference fail with proj-rs too: 3 tests on remote files that are gone (IRIS, Scripps), the
+  live USGS catalogue, `\t` read as a tab by macOS `grep` only, the history race, and 3 images
+  over the RMS limit. 18 files differ between two runs with one library (`/dev/urandom`, the
+  history race).
+- The pyproj 3.8.0 bench (`tools/clients/pyproj.sh`, `docs/CLIENTS-pyproj.md`) runs the whole
+  suite in the environment it expects: the tests marked `network` (through the proxy), shapely,
+  pandas and xarray, the `pyproj` command on `PATH`, PROJ 9.9.0 built with TIFF and curl and the
+  C library of proj-rs with `network`, and it proves the libproj each pass loads
+  (`libproj_proof.sh`; `proj_count.c` now finds a libproj loaded with `RTLD_LOCAL`, as Python
+  loads it). It no longer preloads PROJ's `geodesic.c` in the proj-rs pass: its check of the
+  exported `geod_init` failed under `pipefail`. On `07edeec`: 1044 of 1045 tests pass with both
+  libraries, test by test, the last one skipped by pyproj itself; the script fails when an outcome
+  differs.
 - The GRASS GIS, PDAL, SpatiaLite and libgeotiff benches (`tools/clients/`) set up the
   environment their suites expect, so that what is left says something about libproj, and prove
   the libproj each pass loads (`tools/clients/libproj_proof.sh`: `ldd`, no `DT_RPATH`,
@@ -39,8 +64,8 @@ rest is outside semver.
   all on the expected file) and counts the calls into libproj (270 `proj_create`, 173
   `proj_create_from_wkt`, 28415 `proj_trans` in 29 tests). Run on Linux x86-64, 4 vCPU, GDAL 3.8.4
   of Ubuntu 24.04, with the network, 80 minutes: the 1180 verdicts agree, 4673 files compared,
-  and one real difference, a defect of proj-rs that is documented and not fixed here:
-  `+datum=WGS84` with `+a`/`+b` (or `+rf`) keeps the named datum where PROJ 9.9.0 builds an
+  and one real difference, a defect of proj-rs, fixed by the `+datum=` entry above (#361):
+  `+datum=WGS84` with `+a`/`+b` (or `+rf`) kept the named datum where PROJ 9.9.0 builds an
   `unknown` ellipsoid from the numbers (`grdproject/units`, reproduced with `projinfo -o
   WKT1_GDAL "+proj=longlat +a=6378137 +b=6356752.314 +datum=WGS84 +type=crs"`). 18 files differ
   between two runs with the same library (GMT is not deterministic there) and are listed apart.
