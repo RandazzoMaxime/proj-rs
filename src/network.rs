@@ -343,9 +343,28 @@ pub(crate) fn open_remote_grid(name: &str) -> Option<String> {
     let download = decide_download(name)?;
     let callbacks = context().reading_callbacks()?;
     let mut file = crate::network_chunks::RemoteFile::new(&download.url, callbacks);
-    let opened = file.read_at(0, crate::network_chunks::CHUNK_SIZE).is_ok();
+    let opened = match file.read_at(0, crate::network_chunks::CHUNK_SIZE) {
+        Ok(_) => true,
+        Err(error) => {
+            // `NetworkFile::open` answers a failed open with `Cannot open <url>: <error>` on the
+            // logger of the calling context (`networkfilemanager.cpp:1310-1328`), an answer of
+            // `Network functionality not available` from a PROJ built without libcurl first.
+            // The sort of the candidates reads this availability, and GDAL counts the messages.
+            not_opened(&download.url, &error);
+            false
+        }
+    };
     file.release();
     opened.then_some(download.url)
+}
+
+/// `Cannot open <url>: <error>` on the message channel, with the text of the application's
+/// `open` as it is (`no_op_network_open` writes `Network functionality not available`).
+pub(crate) fn not_opened(url: &str, error: &NetworkError) {
+    let message = match error {
+        NetworkError::Open(message) | NetworkError::ReadRange(message) => message.as_str(),
+    };
+    crate::log_channel::log_error(&format!("Cannot open {url}: {message}"));
 }
 
 /// The whole file at `url`, read through the application's callbacks in 16384-byte chunks
@@ -356,6 +375,14 @@ pub(crate) fn open_remote_grid(name: &str) -> Option<String> {
 /// Any failure gives `None`, and the handle is closed in every case.
 fn fetch_with_callbacks(callbacks: &Callbacks, url: &str) -> Option<Vec<u8>> {
     let mut file = crate::network_chunks::RemoteFile::new(url, callbacks.clone());
+    // The read of a grid that is not on disk is the open PROJ attempts (`NetworkFile::open`,
+    // `networkfilemanager.cpp:1310-1328`): a network off, unavailable or blocking answers
+    // `Cannot open <url>: <error>`, on the message channel, before the transform fails.
+    if let Err(error) = file.read_at(0, crate::network_chunks::CHUNK_SIZE) {
+        not_opened(url, &error);
+        file.release();
+        return None;
+    }
     let bytes = file.read_whole(MAX_GRID_BYTES);
     file.release();
     bytes

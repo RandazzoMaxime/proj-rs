@@ -6,6 +6,20 @@ rest is outside semver.
 
 ## Unreleased
 
+- R 4.5.0 with sf 1.1-3, terra 1.9-60 and lwgeom 0.2-17 runs as an eleventh real client
+  (`tools/clients/r.sh`, `docs/CLIENTS-r.md`): the 25 test scripts of sf and the 981 results of
+  terra's tinytest suite run once with the libproj of PROJ 9.9.0 and once with proj-rs, and give
+  the same output files after normalization. Their paths through libproj found five gaps, fixed
+  here: the sort of the coordinate operations of a CRS pair believed the CDN grids available from
+  their proj.db row alone and put the grid operations first (`proj_pipelines` of terra listed them
+  in another order than PROJ, and `project(..., pipe=)` returned nothing but NA); the
+  `Cannot open <url>` message of a failed grid open went nowhere (a log channel from inside a
+  call is now installed by the C library); the instantiability marking attempted 94 network
+  opens at `proj_create_crs_to_crs` where PROJ trusts proj.db and attempts none
+  (`gridpath::known_available`); a grid that failed to open at transformation time returned NaN
+  with errno 0 instead of an error with `PROJ_ERR_OTHER_NETWORK_ERROR` and the message;
+  `proj_list_get_count(NULL)` returned -1 instead of 0 and eight error texts said `missing
+  argument` where PROJ says `missing required input`.
 - GMT 6.5.0 runs as a tenth real client (`tools/clients/gmt.sh`, `docs/CLIENTS-gmt.md`): its 1180
   test scripts run once with the libproj of PROJ 9.9.0 and once with proj-rs. GMT reaches libproj
   through GDAL alone (`-J+proj=...` becomes an `OGRCreateCoordinateTransformation`, GeoTIFF SRS,

@@ -71,8 +71,9 @@ pub(crate) fn object_pj(context: &mut Ctx, object: &Obj, arena: &util::Arena) ->
 
 #[unsafe(no_mangle)]
 pub extern "C" fn proj_list_get_count(result: *const PJ_OBJ_LIST) -> c_int {
-    guard(-1, || {
-        list(result).map_or(-1, |found| {
+    // A NULL list has zero objects and no error (`c_api.cpp:8699-8704`).
+    guard(0, || {
+        list(result).map_or(0, |found| {
             c_int::try_from(found.objects.len()).unwrap_or(c_int::MAX)
         })
     })

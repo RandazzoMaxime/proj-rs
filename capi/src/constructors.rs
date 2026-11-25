@@ -219,11 +219,7 @@ pub extern "C" fn proj_create_projected_crs(
             conversion_arg(conversion),
             cs_arg(coordinate_system),
         ) else {
-            misuse(
-                ctx,
-                "proj_create_projected_crs",
-                "wrong or missing argument",
-            );
+            misuse(ctx, "proj_create_projected_crs", "missing required input");
             return std::ptr::null_mut();
         };
         give_crs(
@@ -255,7 +251,7 @@ pub extern "C" fn proj_create_derived_projected_crs(
             misuse(
                 ctx,
                 "proj_create_derived_projected_crs",
-                "wrong or missing argument",
+                "missing required input",
             );
             return std::ptr::null_mut();
         };
@@ -323,7 +319,7 @@ pub extern "C" fn proj_create_derived_geographic_crs(
             misuse(
                 ctx,
                 "proj_create_derived_geographic_crs",
-                "wrong or missing argument",
+                "missing required input",
             );
             return std::ptr::null_mut();
         };
@@ -504,7 +500,7 @@ pub extern "C" fn proj_create_geographic_crs_from_datum(
             misuse(
                 ctx,
                 "proj_create_geographic_crs_from_datum",
-                "wrong or missing argument",
+                "missing required input",
             );
             return std::ptr::null_mut();
         };
@@ -534,7 +530,7 @@ pub extern "C" fn proj_create_geocentric_crs_from_datum(
             misuse(
                 ctx,
                 "proj_create_geocentric_crs_from_datum",
-                "wrong or missing argument",
+                "missing required input",
             );
             return std::ptr::null_mut();
         };
@@ -852,7 +848,7 @@ pub extern "C" fn proj_crs_create_bound_vertical_crs(
             misuse(
                 ctx,
                 "proj_crs_create_bound_vertical_crs",
-                "wrong or missing argument",
+                "missing required input",
             );
             return std::ptr::null_mut();
         };

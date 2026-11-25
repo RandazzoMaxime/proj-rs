@@ -307,7 +307,7 @@ pub extern "C" fn proj_create_operations(
         ) else {
             context.fail(
                 PROJ_ERR_OTHER_API_MISUSE as c_int,
-                "proj_create_operations: missing argument",
+                "proj_create_operations: missing required input",
             );
             return std::ptr::null_mut();
         };

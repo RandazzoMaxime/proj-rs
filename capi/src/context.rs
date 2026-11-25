@@ -180,6 +180,21 @@ impl Ctx {
             util::text(found).map(PathBuf::from)
         });
     }
+
+    /// Points the message channel of this thread at the logger of this context: what PROJ
+    /// sends to `pj_log` from inside a call, where the context is not at hand — the
+    /// `Cannot open <url>: <error>` of a grid the network cannot open — reaches the logger
+    /// of the context the call came with, as in PROJ. `install_finder`'s callback holds the
+    /// context the same way.
+    fn install_message_sink(&mut self, owner: usize) {
+        proj_rs::unstable::set_log_sink(std::sync::Arc::new(move |message: &str| {
+            // SAFETY: `owner` is the context of the entry point that installed this sink,
+            // alive for the whole call it made, as the callback of `install_finder` is.
+            // Only the fields a log line reads are touched.
+            let context = owner as *mut Ctx;
+            unsafe { &*context }.log(crate::ffi::PJ_LOG_ERROR as c_int, message);
+        }));
+    }
 }
 
 struct DefaultContext(usize);
@@ -204,10 +219,12 @@ pub(crate) fn context<'a>(pointer: *const PJ_CONTEXT) -> &'a mut Ctx {
         pointer.cast_mut().cast::<Ctx>()
     };
     // The pointer is the default context, or one made by `proj_context_create`.
-    util::deref_mut(raw).unwrap_or_else(|| {
+    let context = util::deref_mut(raw).unwrap_or_else(|| {
         // Unreachable: `default_context` never returns NULL.
         std::process::abort()
-    })
+    });
+    context.install_message_sink(raw as usize);
+    context
 }
 
 /// The context of an object, the default one for `NULL`.

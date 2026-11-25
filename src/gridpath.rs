@@ -66,8 +66,25 @@ pub(crate) fn read(name: &str) -> Option<Vec<u8>> {
     crate::network::fetch_missing(name)
 }
 
-/// The file is on disk, or the network would fetch it.
+/// The file is on disk, or the network opens it: the answer of the endpoint decides, as in
+/// `resolveFullFilename` (`factory.cpp:3441-3450`), where PROJ opens the grid and takes the
+/// availability from the open. A PROJ built without libcurl answers
+/// `Network functionality not available` on every open, and such a grid stays unavailable —
+/// in the sort of the candidates as anywhere else. A remote open that answers comes with
+/// its first chunk in the cache, as the download that follows would.
 pub(crate) fn available(name: &str) -> bool {
+    resolve(name).is_some() || crate::network::open_remote_grid(name).is_some()
+}
+
+/// On disk, or a grid known to `proj.db` while the network is on: [`available`] without the open
+/// attempt. `isPROJInstantiable` (`singleoperation.cpp:339-356`) reads its grids through
+/// `gridsNeeded(db, considerKnownGridsAsAvailable)`, and `lookForGridInfo` with that flag
+/// (`factory.cpp:3496-3510`) answers that a grid with a package or an open-license URL is
+/// available without opening it, the network temporarily off. The flag is the network state
+/// (`c_api.cpp:7918-7929` passes it to `gridsNeeded`), so the open attempt comes only when the
+/// grid is read, at transformation time: what PJ the pair keeps, and what it does with the point,
+/// does not depend on it.
+pub(crate) fn known_available(name: &str) -> bool {
     resolve(name).is_some() || crate::network::decide_download(name).is_some()
 }
 

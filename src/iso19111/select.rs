@@ -411,7 +411,7 @@ fn best_operation_filtered(
     // `proj_coordoperation_is_instantiable` is the check: each grid of the pipeline, by its
     // PROJ name, must open.
     let grids = proj_grids(&best, &db)?;
-    if !grids.iter().all(|grid| gridpath::available(grid)) {
+    if !grids.iter().all(|grid| gridpath::known_available(grid)) {
         let message = missing_grid_message(&characteristics.name, &grids);
         return Ok(Chosen {
             best: if only_best == OnlyBest::On && single_candidate {
@@ -466,7 +466,7 @@ fn creation_warning(
         return Ok(false);
     };
     let grids = proj_grids(operation, db).unwrap_or_else(|_| grid_names(operation));
-    let on_disk = grids.iter().all(|grid| gridpath::available(grid));
+    let on_disk = grids.iter().all(|grid| gridpath::known_available(grid));
     let instantiable = on_disk && export(operation, source, target, db).is_ok();
     if instantiable {
         return Ok(false);
@@ -526,7 +526,7 @@ pub fn best_pipeline_logged_with_authority(
 /// that is not on disk.
 fn missing_grid_message(name: &str, grids: &[String]) -> String {
     let mut message = format!("Attempt to use coordinate operation {name} failed.");
-    for grid in grids.iter().filter(|grid| !gridpath::available(grid)) {
+    for grid in grids.iter().filter(|grid| !gridpath::known_available(grid)) {
         message.push_str(&format!(
             " Grid {grid} is not available. Consult https://proj.org/resource_files.html for guidance."
         ));
@@ -1692,7 +1692,8 @@ pub(crate) fn facade_candidates(
         let grids = proj_grids(operation, &db).unwrap_or_else(|_| grid_names(operation));
         // Only the default policy may rerun the search, so only it needs the grids here.
         if characteristics.exportable
-            && (policy != BestPolicy::Warn || grids.iter().all(|grid| gridpath::available(grid)))
+            && (policy != BestPolicy::Warn
+                || grids.iter().all(|grid| gridpath::known_available(grid)))
         {
             let preparer = Preparer {
                 db: &db,
@@ -1893,12 +1894,10 @@ fn single_operation(
     })
 }
 
-/// A grid a pipeline can be built without: on disk, on the network when it is on, or optional
+/// A grid a pipeline can be built without: [`gridpath::known_available`], or optional
 /// (`+geoidgrids=@name`), which PROJ skips when it is missing.
 fn grid_serves(grid: &str) -> bool {
-    gridpath::available(grid)
-        || grid.starts_with('@')
-        || crate::network::open_remote_grid(grid).is_some()
+    gridpath::known_available(grid) || grid.starts_with('@')
 }
 
 /// `createOperations` with DISCARD: the candidates whose grids are on disk, in the same order.
@@ -2090,7 +2089,7 @@ impl Preparer<'_> {
             let grids = proj_grids(operation, self.db).unwrap_or_else(|_| grid_names(operation));
             let instantiable = characteristics.exportable
                 && grids.iter().all(|grid| {
-                    gridpath::available(grid)
+                    gridpath::known_available(grid)
                         || (self.optional_grids_serve && grid.starts_with('@'))
                 });
             let definition = export(operation, self.source, self.target, self.db).ok();
