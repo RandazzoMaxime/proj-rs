@@ -706,9 +706,6 @@ fn earth_from_params(params: &Params) -> Result<Ellipsoid, CreateError> {
     } else {
         params.text("ellps")
     };
-    if let Some(name) = params.text("datum") {
-        return datum_ellipsoid(name);
-    }
     let mut earth = if let Some(name) = ellps {
         named_ellipsoid(name)?
     } else if !has_size(params) {
@@ -920,13 +917,6 @@ fn datum_record(name: &str) -> Option<(&'static str, DatumShift)> {
     })
 }
 
-fn datum_ellipsoid(name: &str) -> Result<Ellipsoid, CreateError> {
-    let Some((ellps, _)) = datum_record(name) else {
-        return Err(CreateError::IllegalValue("datum"));
-    };
-    named_ellipsoid(ellps)
-}
-
 fn prepare_params(params: &mut Params) -> Result<(), CreateError> {
     expand_init(params)?;
     expand_datum(params)?;
@@ -960,7 +950,7 @@ fn expand_datum(params: &mut Params) -> Result<(), CreateError> {
         let Some((ellps, shift)) = datum_record(&name) else {
             return Err(CreateError::IllegalValue("datum"));
         };
-        let visible = !params.contains("ellps") && !params.contains("a") && !params.contains("R");
+        let visible = !params.contains("ellps");
         params.append(&format!("ellps={ellps}"), visible);
         match shift {
             // PROJ's table gives these datums `towgs84=0,0,0`: listed, and no shift applied.
