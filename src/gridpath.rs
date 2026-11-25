@@ -76,14 +76,16 @@ pub(crate) fn available(name: &str) -> bool {
     resolve(name).is_some() || crate::network::open_remote_grid(name).is_some()
 }
 
-/// On disk, or a grid known to `proj.db` while the network is on: [`available`] without the open
-/// attempt. `isPROJInstantiable` (`singleoperation.cpp:339-356`) reads its grids through
-/// `gridsNeeded(db, considerKnownGridsAsAvailable)`, and `lookForGridInfo` with that flag
-/// (`factory.cpp:3496-3510`) answers that a grid with a package or an open-license URL is
-/// available without opening it, the network temporarily off. The flag is the network state
-/// (`c_api.cpp:7918-7929` passes it to `gridsNeeded`), so the open attempt comes only when the
-/// grid is read, at transformation time: what PJ the pair keeps, and what it does with the point,
-/// does not depend on it.
+/// On disk, or, the network on, a grid the endpoint would serve ([`crate::network::decide_download`]):
+/// [`available`] without the open attempt. `proj_create_crs_to_crs` with the network on asks for
+/// `PROJ_GRID_AVAILABILITY_KNOWN_AVAILABLE` (`crs_to_crs.cpp:572-576`), and `isPROJInstantiable`
+/// (`singleoperation.cpp:339-356`) reads its grids through `gridsNeeded(db,
+/// considerKnownGridsAsAvailable)` with the network state as the flag (`c_api.cpp:7918-7929`):
+/// `lookForGridInfo` (`factory.cpp:3496-3510`) then answers that a grid with a package or an
+/// open-license URL is available with the network temporarily off. The open attempt comes only
+/// when the grid is read, at transformation time. Every building of a pair, of a pipeline and of
+/// an instantiability mark goes through this one; only the sort of `proj_create_operations` under
+/// `USED_FOR_SORTING` opens (`available`).
 pub(crate) fn known_available(name: &str) -> bool {
     resolve(name).is_some() || crate::network::decide_download(name).is_some()
 }

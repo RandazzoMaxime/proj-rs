@@ -1514,7 +1514,12 @@ impl Operation {
     /// step refuses it. `None` when PROJ logs nothing for that failure.
     pub(crate) fn failure_message(&self, coord: Coord, way: Direction) -> Option<String> {
         let inverse_chain = way == Direction::Inverse;
-        match self.step.pipeline_failure(coord, inverse_chain) {
+        // The point is run again to find the step that refused it: a deferred grid that did not
+        // open is tried again, and its `Cannot open <url>` was already sent by the run itself
+        // (PROJ opens a deferred grid once, `hgridshift.cpp:33-40`).
+        let failure =
+            crate::log_channel::muted(|| self.step.pipeline_failure(coord, inverse_chain));
+        match failure {
             Some(line) => line,
             None if inverse_chain => None,
             None => failure_log::operation_failure(&self.name, self.step.as_ref(), coord),

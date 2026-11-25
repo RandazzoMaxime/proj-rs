@@ -6,7 +6,8 @@
 #   fork datadir geodesic proj_string_type projjson_objects horizontal_datum string_lifetime
 #   unnamed_operation embedded_db pj_info_order normalize_operation latin1_input
 #   crs_to_crs_describe create_any_object export_objects derived_temporal last_used_operation
-#   deriving_conversion single_crs_cs grid_used network_grids crs_to_crs_area step_error_log
+#   deriving_conversion single_crs_cs grid_used network_grids network_listing missing_input
+#   crs_to_crs_area step_error_log
 #   proj_based_operation proj_string_refusal invalid_operations errno_parity crs_proj_strings
 #   wkt_warnings wkt_round_trip c_api
 #   (default: all). PENDING=0 runs the cases of pending.txt too, to see them fail.
@@ -35,7 +36,7 @@ tests=("$@")
                                   latin1_input crs_to_crs_describe create_any_object
                                   export_objects derived_temporal last_used_operation
                                   deriving_conversion single_crs_cs grid_used network_grids
-                                  crs_to_crs_area step_error_log proj_based_operation
+                                  network_listing missing_input crs_to_crs_area step_error_log proj_based_operation
                                   proj_string_refusal invalid_operations errno_parity
                                   crs_proj_strings wkt_warnings wkt_round_trip
                                   c_api)
@@ -422,6 +423,28 @@ for test in "${tests[@]}"; do
       theirs=$(env -u LD_LIBRARY_PATH PROJ_DATA="$ref/build/data" "$out/network_grids_ref" "${pairs[@]}" 2>/dev/null)
       [ "$ours" = "$theirs" ] || { diff <(echo "$theirs") <(echo "$ours") >&2; exit 1; }
       echo "grid availability identical to libproj for $((${#pairs[@]} / 2)) pairs, network off and on" ;;
+    network_listing)
+      # terra's paths with the network on and no grid: the order of proj_create_operations, the
+      # Cannot open lines its logger receives, instantiability, and a point whose grid fails.
+      echo "== network_listing"
+      gcc -std=c99 -I"$root/capi/include" "$here/network_listing.c" -o "$out/network_listing_ours" \
+        "${ldflags[@]}" -lm
+      gcc -std=c99 -I"$src/src" "$here/network_listing.c" -o "$out/network_listing_ref" -L"$ref/build/lib" \
+        -lproj -Wl,-rpath,"$ref/build/lib" -lm
+      ours=$(PROJ_DATA="$ref/build/data" "$out/network_listing_ours" 2>/dev/null)
+      theirs=$(env -u LD_LIBRARY_PATH PROJ_DATA="$ref/build/data" "$out/network_listing_ref" 2>/dev/null)
+      [ "$ours" = "$theirs" ] || { diff <(echo "$theirs") <(echo "$ours") >&2; exit 1; }
+      echo "listing, messages and points identical to libproj, $(echo "$ours" | grep -c 'Cannot open') Cannot open lines" ;;
+    missing_input)
+      # A NULL or wrongly typed argument of the constructors: object, errno and the logged line.
+      echo "== missing_input"
+      gcc -std=c99 -I"$root/capi/include" "$here/missing_input.c" -o "$out/missing_input_ours" "${ldflags[@]}"
+      gcc -std=c99 -I"$src/src" "$here/missing_input.c" -o "$out/missing_input_ref" -L"$ref/build/lib" \
+        -lproj -Wl,-rpath,"$ref/build/lib"
+      ours=$(PROJ_DATA="$ref/build/data" "$out/missing_input_ours" 2>/dev/null)
+      theirs=$(env -u LD_LIBRARY_PATH PROJ_DATA="$ref/build/data" "$out/missing_input_ref" 2>/dev/null)
+      [ "$ours" = "$theirs" ] || { diff <(echo "$theirs") <(echo "$ours") >&2; exit 1; }
+      echo "$(echo "$ours" | wc -l) constructor calls identical to libproj" ;;
     crs_to_crs_area)
       # The area of interest of proj_create_crs_to_crs_from_pj filters the candidates.
       echo "== crs_to_crs_area"

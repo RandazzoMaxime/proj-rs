@@ -40,6 +40,15 @@ fn misuse(ctx: *mut PJ_CONTEXT, who: &str, message: &str) {
     );
 }
 
+/// `Missing input datum_or_datum_ensemble`, logged through `proj_log_error`: `PROJ_ERR_OTHER`
+/// unless an error is already set (`c_api.cpp:3573-3577`, `3675-3679`).
+fn missing_datum(ctx: *mut PJ_CONTEXT, who: &str) {
+    context(ctx).fail_unless_set(
+        PROJ_ERR_OTHER as c_int,
+        &format!("{who}: Missing input datum_or_datum_ensemble"),
+    );
+}
+
 fn failed(ctx: *mut PJ_CONTEXT, who: &str, error: &dyn std::fmt::Display) {
     context(ctx).fail(PROJ_ERR_OTHER as c_int, &format!("{who}: {error}"));
 }
@@ -214,12 +223,16 @@ pub extern "C" fn proj_create_projected_crs(
     coordinate_system: *const PJ,
 ) -> *mut PJ {
     guard(std::ptr::null_mut(), || {
+        if geodetic_crs.is_null() || conversion.is_null() || coordinate_system.is_null() {
+            misuse(ctx, "proj_create_projected_crs", "missing required input");
+            return std::ptr::null_mut();
+        }
+        // An argument of another type gives NULL with nothing logged (`c_api.cpp:5074-5087`).
         let (Some(base), Some(conversion), Some(CoordinateSystem::Cartesian(system))) = (
             crs_arg(geodetic_crs).and_then(geodetic_of),
             conversion_arg(conversion),
             cs_arg(coordinate_system),
         ) else {
-            misuse(ctx, "proj_create_projected_crs", "missing required input");
             return std::ptr::null_mut();
         };
         give_crs(
@@ -243,16 +256,25 @@ pub extern "C" fn proj_create_derived_projected_crs(
     coordinate_system: *const PJ,
 ) -> *mut PJ {
     guard(std::ptr::null_mut(), || {
-        let (Some(Crs::Projected(base)), Some(conversion), Some(system)) = (
-            crs_arg(base_proj_crs),
-            conversion_arg(deriving_conversion),
-            cs_arg(coordinate_system),
-        ) else {
+        if base_proj_crs.is_null() || deriving_conversion.is_null() || coordinate_system.is_null() {
             misuse(
                 ctx,
                 "proj_create_derived_projected_crs",
                 "missing required input",
             );
+            return std::ptr::null_mut();
+        }
+        // An argument of another type gives NULL with nothing logged (`c_api.cpp:10042-10055`).
+        let (
+            Some(Crs::Projected(base)),
+            Some(conversion),
+            Some(system @ CoordinateSystem::Cartesian(_)),
+        ) = (
+            crs_arg(base_proj_crs),
+            conversion_arg(deriving_conversion),
+            cs_arg(coordinate_system),
+        )
+        else {
             return std::ptr::null_mut();
         };
         give_crs(
@@ -311,16 +333,19 @@ pub extern "C" fn proj_create_derived_geographic_crs(
     ellipsoidal_cs: *const PJ,
 ) -> *mut PJ {
     guard(std::ptr::null_mut(), || {
-        let (Some(base), Some(conversion), Some(system)) = (
+        // A base that is not a geographic CRS, a conversion or a coordinate system that is not
+        // ellipsoidal gives NULL with nothing logged (`c_api.cpp:3722-3729`); PROJ dereferences a
+        // NULL argument, this library answers it the same way.
+        let (
+            Some(base @ Crs::Geographic(_)),
+            Some(conversion),
+            Some(system @ CoordinateSystem::Ellipsoidal(_)),
+        ) = (
             crs_arg(base_geographic_crs),
             conversion_arg(conversion),
             cs_arg(ellipsoidal_cs),
-        ) else {
-            misuse(
-                ctx,
-                "proj_create_derived_geographic_crs",
-                "missing required input",
-            );
+        )
+        else {
             return std::ptr::null_mut();
         };
         match DerivedCRS::create(
@@ -491,16 +516,23 @@ pub extern "C" fn proj_create_geographic_crs_from_datum(
     ellipsoidal_cs: *const PJ,
 ) -> *mut PJ {
     guard(std::ptr::null_mut(), || {
-        let (Some((datum, ensemble)), Some(CoordinateSystem::Ellipsoidal(system))) = (
-            pj(datum_or_datum_ensemble)
-                .and_then(|o| o.obj.as_ref())
-                .and_then(datum_parts),
-            cs_arg(ellipsoidal_cs),
-        ) else {
-            misuse(
-                ctx,
-                "proj_create_geographic_crs_from_datum",
-                "missing required input",
+        if datum_or_datum_ensemble.is_null() {
+            missing_datum(ctx, "proj_create_geographic_crs_from_datum");
+            return std::ptr::null_mut();
+        }
+        // A coordinate system that is not ellipsoidal gives NULL with nothing logged, before the
+        // datum is looked at (`c_api.cpp:3578-3585`); PROJ dereferences a NULL one.
+        let Some(CoordinateSystem::Ellipsoidal(system)) = cs_arg(ellipsoidal_cs) else {
+            return std::ptr::null_mut();
+        };
+        let Some((datum, ensemble)) = pj(datum_or_datum_ensemble)
+            .and_then(|o| o.obj.as_ref())
+            .and_then(datum_parts)
+        else {
+            // `SingleCRS::Private` (`crs.cpp:1581-1583`), caught and logged by the constructor.
+            context(ctx).fail_unless_set(
+                PROJ_ERR_OTHER as c_int,
+                "proj_create_geographic_crs_from_datum: datum or datumEnsemble should be set",
             );
             return std::ptr::null_mut();
         };
@@ -523,14 +555,19 @@ pub extern "C" fn proj_create_geocentric_crs_from_datum(
     linear_units_conv: f64,
 ) -> *mut PJ {
     guard(std::ptr::null_mut(), || {
+        if datum_or_datum_ensemble.is_null() {
+            missing_datum(ctx, "proj_create_geocentric_crs_from_datum");
+            return std::ptr::null_mut();
+        }
         let Some((datum, ensemble)) = pj(datum_or_datum_ensemble)
             .and_then(|o| o.obj.as_ref())
             .and_then(datum_parts)
         else {
-            misuse(
-                ctx,
-                "proj_create_geocentric_crs_from_datum",
-                "missing required input",
+            // `GeodeticCRS::create` (`crs.cpp`), caught and logged by the constructor.
+            context(ctx).fail_unless_set(
+                PROJ_ERR_OTHER as c_int,
+                "proj_create_geocentric_crs_from_datum: One of Datum or DatumEnsemble should be \
+                 defined",
             );
             return std::ptr::null_mut();
         };
@@ -840,15 +877,30 @@ pub extern "C" fn proj_crs_create_bound_vertical_crs(
     grid_name: *const c_char,
 ) -> *mut PJ {
     guard(std::ptr::null_mut(), || {
-        let (Some(vertical @ Crs::Vertical(_)), Some(hub @ Crs::Geographic(_)), Some(grid)) = (
-            crs_arg(vert_crs),
-            crs_arg(hub_geographic_3D_crs),
+        let (false, false, Some(grid)) = (
+            vert_crs.is_null(),
+            hub_geographic_3D_crs.is_null(),
             util::text(grid_name),
         ) else {
             misuse(
                 ctx,
                 "proj_crs_create_bound_vertical_crs",
                 "missing required input",
+            );
+            return std::ptr::null_mut();
+        };
+        let Some(vertical @ Crs::Vertical(_)) = crs_arg(vert_crs) else {
+            context(ctx).fail_unless_set(
+                PROJ_ERR_OTHER as c_int,
+                "proj_crs_create_bound_vertical_crs: vert_crs is not a VerticalCRS",
+            );
+            return std::ptr::null_mut();
+        };
+        // PROJ casts the hub to a CRS of any kind (`c_api.cpp:2346-2351`).
+        let Some(hub) = crs_arg(hub_geographic_3D_crs) else {
+            context(ctx).fail_unless_set(
+                PROJ_ERR_OTHER as c_int,
+                "proj_crs_create_bound_vertical_crs: hub_geographic_3D_crs is not a CRS",
             );
             return std::ptr::null_mut();
         };

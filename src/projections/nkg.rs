@@ -659,7 +659,7 @@ fn grids_available(definition: &str) -> bool {
         })
         .flat_map(|value| value.split(','))
         .filter(|name| !name.is_empty() && !name.starts_with('@'))
-        .all(crate::gridpath::available)
+        .all(crate::gridpath::known_available)
 }
 
 fn needs_grid(definition: &str) -> bool {

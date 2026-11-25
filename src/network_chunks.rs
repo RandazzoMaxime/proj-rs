@@ -216,14 +216,14 @@ impl RemoteFile {
             .unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// Up to `len` bytes from `offset`, fewer at the end of the file, as PROJ's
-    /// `NetworkFile::read`: chunk after chunk, each from memory, then `cache.db`, else downloaded
-    /// with the chunks after it ([`Self::fetch`]); the next chunks then come from the cache.
     /// The URL this file reads, as `Cannot open <url>` names it.
     pub(crate) fn url(&self) -> &str {
         &self.url
     }
 
+    /// Up to `len` bytes from `offset`, fewer at the end of the file, as PROJ's
+    /// `NetworkFile::read`: chunk after chunk, each from memory, then `cache.db`, else downloaded
+    /// with the chunks after it ([`Self::fetch`]); the next chunks then come from the cache.
     pub(crate) fn read_at(&mut self, offset: u64, len: usize) -> Result<Vec<u8>, NetworkError> {
         if len == 0 {
             return Ok(Vec::new());
