@@ -117,11 +117,18 @@ def speed_card(row, call, title, subtitle):
     return fill("grouped-hbars", data, {f"r{n}" for n in range(1, len(cases) + 1)})
 
 
+def crate_version():
+    for line in (history.ROOT / "Cargo.toml").read_text(encoding="utf-8").splitlines():
+        if line.startswith("version"):
+            return line.split('"')[1]
+    raise SystemExit("cards.py: no version in Cargo.toml")
+
+
 def size_card(fp):
     installs = {i["id"]: i["stripped_bytes"] / MIB for i in fp["size"]["installs"]}
     ours, proj, full = installs["ours"], installs["proj"], installs["proj_full"]
     data = {
-        "eyebrow": "PROJ-RS 1.0 · SIZE ON DISK",
+        "eyebrow": f"PROJ-RS {crate_version()} · SIZE ON DISK",
         "title": f"{ours:.1f}",
         "accentWord": "MiB",
         "titleRest": "",
@@ -165,9 +172,9 @@ def memory_card(fp):
     rss = [r for r in rss if r[0] in names]
     create = next(r for r in rss if r[0] == "create")
     data = {
-        "eyebrow": "PROJ-RS 1.0 · PEAK MEMORY",
-        "title": "Less memory, in",
-        "accentWord": "every scenario",
+        "eyebrow": f"PROJ-RS {crate_version()} · PEAK MEMORY",
+        "title": "Less memory, in" if all(r[1] < r[2] for r in rss) else "Peak memory, in",
+        "accentWord": "every scenario" if all(r[1] < r[2] for r in rss) else f"{len(rss)} scenarios",
         "subtitle": f"peak resident memory (VmHWM), lower is better · creating a transform: {times(create[2] / create[1])} less",
         "legendNew": "proj-rs",
         "legendRival": "PROJ 9.9.0",

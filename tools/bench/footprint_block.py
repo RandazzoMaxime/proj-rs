@@ -104,28 +104,50 @@ def memory_table(data, field, scale, unit, title):
     return "\n".join(lines)
 
 
+def db_phrase(data):
+    """How the README names the database embedded in the proj-rs programs."""
+    db = data["size"]["embedded_db_bytes"]
+    if data["size"].get("embedded_db_name", "").endswith(".pages"):
+        return f"`proj.db` compressed page by page ({mib(db)}, `data/proj.pages`)"
+    return f"`proj.db` ({mib(db)})"
+
+
+def memory_summary(data):
+    """One sentence over the memory card: in how many scenarios proj-rs peaks lower, and the range."""
+    scenarios = data["memory"]["scenarios"]
+    ratios = [s["proj"]["peak_rss_kb"] / s["ours"]["peak_rss_kb"] for s in scenarios]
+    lower = sum(1 for r in ratios if r > 1.0)
+    created = next(s for s in scenarios if s["id"] == "create")
+    where = (
+        f"in every one of the {len(scenarios)} scenarios of the card, from {min(ratios):.1f}× to {max(ratios):.1f}× less"
+        if lower == len(scenarios)
+        else f"in {lower} of the {len(scenarios)} scenarios of the card"
+    )
+    return (
+        f"In memory, proj-rs peaks lower than PROJ 9.9.0 {where}; creating the transform takes "
+        f"{relative(created['ours']['peak_rss_kb'], created['proj']['peak_rss_kb'], 'memory')}."
+    )
+
+
 def block(data):
     installs = {i["id"]: i for i in data["size"]["installs"]}
     ours, proj, full = installs["ours"], installs["proj"], installs["proj_full"]
-    scenarios = {s["id"]: s for s in data["memory"]["scenarios"]}
     empty_rust = data["size"]["empty_rust_program"]
     program = next(f for f in data["size"]["files"] if f["name"] == "footprint-rs")
     db = data["size"]["embedded_db_bytes"]
-    created, points, array, multi = (scenarios[k] for k in ("create", "points", "array", "multi"))
-    rss = lambda s, v: s[v]["peak_rss_kb"]
+    db_text = db_phrase(data)
     network_text = ""
     if "ours_network" in installs:
         net = installs["ours_network"]
         ssl = named_bytes(data, net, ("libssl", "libcrypto"))
         network_text = (
-            f"With the `network` feature (the HTTPS grid download, TLS from the system) the program is "
-            f"{mib(net['stripped_bytes'])}"
-            + (f", of which {mib(ssl)} is OpenSSL" if ssl else "")
-            + f": {smaller_than(net['stripped_bytes'], full['stripped_bytes'])} the PROJ with curl. "
+            f"With the `network` feature (the HTTPS grid download, TLS from the system)"
+            + (f", {mib(ssl)} of OpenSSL included," if ssl else "")
+            + f" it is still {smaller_than(net['stripped_bytes'], full['stripped_bytes'])} the PROJ with curl. "
         )
     lines = [
-        "The same conversion, EPSG:4326 to EPSG:2154, measured on the same machine "
-        "(Linux x86-64, glibc), proj-rs against PROJ 9.9.0.",
+        "The same conversion, EPSG:4326 to EPSG:2154, measured on one machine "
+        f"(Linux x86-64, glibc, {data['cpu']}), proj-rs against PROJ 9.9.0.",
         "",
         '<img src="bench/cards/size.png" alt="Size on disk of a program that converts EPSG:4326 to 2154: '
         'proj-rs next to PROJ 9.9.0, minimal and with TIFF and curl" width="100%">',
@@ -133,23 +155,14 @@ def block(data):
         '<img src="bench/cards/memory.png" alt="Peak resident memory of five scenarios, proj-rs next to '
         'PROJ 9.9.0" width="100%">',
         "",
-        f"On disk, a Rust program with proj-rs is {mib(ours['stripped_bytes'])} with `proj.db` included "
-        f"({mib(db)} of it) and no library other than the C library: "
-        f"{smaller_than(ours['stripped_bytes'], proj['stripped_bytes'])} a C program with PROJ 9.9.0 built "
-        f"as in the speed comparison ({mib(proj['stripped_bytes'])}), and "
-        f"{smaller_than(ours['stripped_bytes'], full['stripped_bytes'])} one with a PROJ built with TIFF "
-        f"and curl ({mib(full['stripped_bytes'])}). {network_text}"
-        f"The code of proj-rs alone, `proj.db` left out, "
-        f"is {mib(ours['parts']['code']['stripped_bytes'])}; an empty Rust program is "
-        f"{mib(empty_rust['stripped_bytes'])}.",
+        f"On disk, a Rust program with proj-rs is {smaller_than(ours['stripped_bytes'], proj['stripped_bytes'])} "
+        f"a C program with PROJ 9.9.0 built as in the speed comparison, and "
+        f"{smaller_than(ours['stripped_bytes'], full['stripped_bytes'])} one with a PROJ built with TIFF and curl, "
+        f"with {db_text} inside and no library other than the C library. {network_text}"
+        f"The code of proj-rs alone is {mib(ours['parts']['code']['stripped_bytes'])}; an empty Rust program "
+        f"is {mib(empty_rust['stripped_bytes'])}.",
         "",
-        f"In memory, creating the transform peaks at {rss(created, 'ours') / 1024:.1f} MiB for proj-rs and "
-        f"{rss(created, 'proj') / 1024:.1f} MiB for PROJ "
-        f"({relative(rss(created, 'ours'), rss(created, 'proj'), 'memory')}). With a million points one at a time "
-        f"it is {rss(points, 'ours') / 1024:.1f} MiB and {rss(points, 'proj') / 1024:.1f} MiB; as one array, "
-        f"{rss(array, 'ours') / 1024:.1f} MiB and {rss(array, 'proj') / 1024:.1f} MiB, "
-        f"the array of points itself being {data['memory']['points'] * 16 / MIB:.1f} MiB; with several candidate operations (EPSG:4267 to 4326), "
-        f"{rss(multi, 'ours') / 1024:.1f} MiB and {rss(multi, 'proj') / 1024:.1f} MiB.",
+        memory_summary(data),
         "",
         "<details>",
         "<summary><b>Size and memory, component by component</b></summary>",
@@ -173,8 +186,8 @@ def block(data):
         "",
         libs_text(data),
         "",
-        f"The Rust program is {mib(program['stripped_bytes'])} stripped, of which {mib(db)} is the "
-        f"embedded `proj.db`; the empty Rust program of the same toolchain is "
+        f"The Rust program is {mib(program['stripped_bytes'])} stripped, of which {mib(db)} is "
+        f"the embedded `proj.db`; the empty Rust program of the same toolchain is "
         f"{mib(empty_rust['stripped_bytes'])}. The code of proj-rs thus adds "
         f"{mib(ours['parts']['code']['stripped_bytes'] - empty_rust['stripped_bytes'])}, SQLite and the "
         "TIFF reader included.",

@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
-# Runs the progress bench and appends one line to bench/history.jsonl, then redraws the
-# charts of bench/ and rewrites the README numbers from the whole history.
-# Compare only lines with the same "machine". Commit history.jsonl and the charts with the lot.
+# Runs the progress bench and appends one line to bench/history.jsonl, then redraws the cards
+# of bench/cards/ and rewrites the README numbers from the whole history.
+# Compare only lines with the same "machine". Commit history.jsonl and the cards with the lot.
 #
 # BENCH_MACHINE  machine name of the line (default: hostname)
 # BENCH_ROUNDS   runs of the bench; each case keeps its smallest time (default: 1)
@@ -35,6 +35,5 @@ passes=$(awk '$1 == "network" { print $2 }' tests/gie/passing.txt)
 line="{\"date\":\"$date\",\"commit\":\"$commit\",\"dirty\":$dirty,\"machine\":\"$machine\",\"passes\":$passes,\"result\":$result}"
 echo "$line" >> bench/history.jsonl
 echo "$line"
-python3 tools/bench/trend_svg.py
 python3 tools/bench/how_fast.py
 python3 tools/bench/cards.py

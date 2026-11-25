@@ -1,5 +1,5 @@
-//! [`V4`] : quatre `f64` dans deux registres NEON, avec la même API sûre que celle d'AVX2
-//! (`v4.rs`).
+//! [`V4`] : quatre `f64` dans deux registres NEON, la réalisation aarch64 de [`Vector`], avec la
+//! même API sûre que celle d'AVX2 (`v4.rs`).
 //!
 //! Les intrinsèques passent par `pulp` (`pulp::aarch64::Neon`) : un jeton que l'on n'obtient
 //! qu'après avoir détecté le processeur, et dont les méthodes appellent l'intrinsèque du même
@@ -23,6 +23,8 @@ use pulp::bytemuck;
 use std::arch::aarch64::{float64x2_t, int64x2_t, uint64x2_t};
 use std::ops::{Add, Div, Mul, Neg, Sub};
 
+use super::vec::{SimdToken, Vector};
+
 /// Preuve que le processeur supporte NEON, que toute cible aarch64 a : `detect` rend toujours
 /// `Some`, mais l'API reste celle de la preuve d'AVX2 (`Avx2`), pour que les noyaux soient les
 /// mêmes.
@@ -35,12 +37,14 @@ impl Neon {
     pub(crate) fn detect() -> Option<Self> {
         Cpu::try_new().map(Self)
     }
+}
 
+impl SimdToken for Neon {
     /// Exécute `f`. NEON étant dans le socle de la cible, `f` est déjà compilé avec ses
     /// instructions : les méthodes `#[inline(always)]` de [`V4`] y deviennent des instructions en
     /// ligne sans passer par une fonction `target_feature`.
     #[inline(always)]
-    pub(super) fn vectorize<F: pulp::NullaryFnOnce>(self, f: F) -> F::Output {
+    fn vectorize<F: pulp::NullaryFnOnce>(self, f: F) -> F::Output {
         f.call()
     }
 }
@@ -84,105 +88,6 @@ impl V4 {
         }
     }
 
-    /// Quatre fois `value`.
-    #[inline(always)]
-    pub(crate) fn splat(tok: Neon, value: f64) -> Self {
-        Self {
-            low: tok.0.neon.vdupq_n_f64(value),
-            high: tok.0.neon.vdupq_n_f64(value),
-            simd: tok.0,
-        }
-    }
-
-    /// Quatre zéros.
-    #[inline(always)]
-    pub(crate) fn zero(tok: Neon) -> Self {
-        Self::splat(tok, 0.0)
-    }
-
-    /// Charge quatre valeurs (deux copies de 16 octets, sans alignement exigé).
-    #[inline(always)]
-    pub(crate) fn load(tok: Neon, lanes: &[f64; 4]) -> Self {
-        let [a, b, c, d] = *lanes;
-        Self {
-            low: bytemuck::cast([a, b]),
-            high: bytemuck::cast([c, d]),
-            simd: tok.0,
-        }
-    }
-
-    /// Écrit les quatre voies.
-    #[inline(always)]
-    pub(crate) fn store(self, lanes: &mut [f64; 4]) {
-        let low: [f64; 2] = bytemuck::cast(self.low);
-        let high: [f64; 2] = bytemuck::cast(self.high);
-        *lanes = [low[0], low[1], high[0], high[1]];
-    }
-
-    /// Quatre fois `value`, sans [`Neon`] : `self` en est la preuve.
-    #[inline(always)]
-    pub(super) fn splat_like(self, value: f64) -> Self {
-        self.with(
-            self.simd.neon.vdupq_n_f64(value),
-            self.simd.neon.vdupq_n_f64(value),
-        )
-    }
-
-    /// Un registre de ces quatre valeurs, sans [`Neon`] : `self` en est la preuve.
-    #[inline(always)]
-    pub(super) fn reload(self, lanes: &[f64; 4]) -> Self {
-        let [a, b, c, d] = *lanes;
-        self.with(bytemuck::cast([a, b]), bytemuck::cast([c, d]))
-    }
-
-    /// Les quatre voies, pour un calcul voie par voie.
-    #[inline(always)]
-    pub(crate) fn to_array(self) -> [f64; 4] {
-        let mut lanes = [0.0; 4];
-        self.store(&mut lanes);
-        lanes
-    }
-
-    /// L'entier le plus proche, au pair en cas d'égalité (`frintn`).
-    #[inline(always)]
-    pub(crate) fn round(self) -> Self {
-        self.with(
-            self.simd.neon.vrndnq_f64(self.low),
-            self.simd.neon.vrndnq_f64(self.high),
-        )
-    }
-
-    /// La grandeur de `self` avec le signe de `sign` (un zéro négatif compris).
-    #[inline(always)]
-    pub(crate) fn copysign(self, sign: Self) -> Self {
-        let neon = self.simd.neon;
-        let sign_bit = neon.vdupq_n_u64(SIGN_BIT);
-        // `bsl` prend le bit de `sign` là où le masque est à un, celui de `self` ailleurs.
-        self.with(
-            neon.vbslq_f64(sign_bit, sign.low, self.low),
-            neon.vbslq_f64(sign_bit, sign.high, self.high),
-        )
-    }
-
-    /// Les voies dont le bit de signe est à un : négatifs, zéro négatif, `NaN` de signe négatif.
-    #[inline(always)]
-    pub(crate) fn sign_mask(self) -> Mask {
-        let neon = self.simd.neon;
-        let zero = neon.vdupq_n_s64(0);
-        let low: int64x2_t = bytemuck::cast(self.low);
-        let high: int64x2_t = bytemuck::cast(self.high);
-        // Un entier est négatif exactement quand son bit de signe est à un.
-        self.mask(neon.vcltq_s64(low, zero), neon.vcltq_s64(high, zero))
-    }
-
-    /// `self * 2^k` pour des `k` entiers, `|k| <= 2000`, en deux multiplications pour que la
-    /// puissance de deux reste représentable.
-    #[inline(always)]
-    pub(super) fn scale_pow2(self, k: Self) -> Self {
-        let half = (k * self.splat_like(0.5)).round();
-        self * half.pow2() * (k - half).pow2()
-    }
-
     /// `2^k` pour un `k` entier de `[-1022, 1023]`, par l'exposant : `(k + 1023) << 52`.
     #[inline(always)]
     fn pow2(self) -> Self {
@@ -204,11 +109,128 @@ impl V4 {
             self.simd.neon.vcvtq_s64_f64(self.high),
         )
     }
+}
+
+macro_rules! compare {
+    ($name:ident, $intrinsic:ident, $doc:literal) => {
+        #[doc = $doc]
+        #[inline(always)]
+        fn $name(self, other: Self) -> Self::Mask {
+            self.mask(
+                self.simd.neon.$intrinsic(self.low, other.low),
+                self.simd.neon.$intrinsic(self.high, other.high),
+            )
+        }
+    };
+}
+
+impl Vector<4> for V4 {
+    type Token = Neon;
+    type Mask = Mask;
+
+    /// Quatre fois `value`.
+    #[inline(always)]
+    fn splat(tok: Neon, value: f64) -> Self {
+        Self {
+            low: tok.0.neon.vdupq_n_f64(value),
+            high: tok.0.neon.vdupq_n_f64(value),
+            simd: tok.0,
+        }
+    }
+
+    /// Quatre zéros.
+    #[inline(always)]
+    fn zero(tok: Neon) -> Self {
+        Self::splat(tok, 0.0)
+    }
+
+    /// Charge quatre valeurs (deux copies de 16 octets, sans alignement exigé).
+    #[inline(always)]
+    fn load(tok: Neon, lanes: &[f64; 4]) -> Self {
+        let [a, b, c, d] = *lanes;
+        Self {
+            low: bytemuck::cast([a, b]),
+            high: bytemuck::cast([c, d]),
+            simd: tok.0,
+        }
+    }
+
+    /// Écrit les quatre voies.
+    #[inline(always)]
+    fn store(self, lanes: &mut [f64; 4]) {
+        let low: [f64; 2] = bytemuck::cast(self.low);
+        let high: [f64; 2] = bytemuck::cast(self.high);
+        *lanes = [low[0], low[1], high[0], high[1]];
+    }
+
+    /// Quatre fois `value`, sans [`Neon`] : `self` en est la preuve.
+    #[inline(always)]
+    fn splat_like(self, value: f64) -> Self {
+        self.with(
+            self.simd.neon.vdupq_n_f64(value),
+            self.simd.neon.vdupq_n_f64(value),
+        )
+    }
+
+    /// Un registre de ces quatre valeurs, sans [`Neon`] : `self` en est la preuve.
+    #[inline(always)]
+    fn reload(self, lanes: &[f64; 4]) -> Self {
+        let [a, b, c, d] = *lanes;
+        self.with(bytemuck::cast([a, b]), bytemuck::cast([c, d]))
+    }
+
+    /// Les quatre voies, pour un calcul voie par voie.
+    #[inline(always)]
+    fn to_array(self) -> [f64; 4] {
+        let mut lanes = [0.0; 4];
+        self.store(&mut lanes);
+        lanes
+    }
+
+    /// L'entier le plus proche, au pair en cas d'égalité (`frintn`).
+    #[inline(always)]
+    fn round(self) -> Self {
+        self.with(
+            self.simd.neon.vrndnq_f64(self.low),
+            self.simd.neon.vrndnq_f64(self.high),
+        )
+    }
+
+    /// La grandeur de `self` avec le signe de `sign` (un zéro négatif compris).
+    #[inline(always)]
+    fn copysign(self, sign: Self) -> Self {
+        let neon = self.simd.neon;
+        let sign_bit = neon.vdupq_n_u64(SIGN_BIT);
+        // `bsl` prend le bit de `sign` là où le masque est à un, celui de `self` ailleurs.
+        self.with(
+            neon.vbslq_f64(sign_bit, sign.low, self.low),
+            neon.vbslq_f64(sign_bit, sign.high, self.high),
+        )
+    }
+
+    /// Les voies dont le bit de signe est à un : négatifs, zéro négatif, `NaN` de signe négatif.
+    #[inline(always)]
+    fn sign_mask(self) -> Self::Mask {
+        let neon = self.simd.neon;
+        let zero = neon.vdupq_n_s64(0);
+        let low: int64x2_t = bytemuck::cast(self.low);
+        let high: int64x2_t = bytemuck::cast(self.high);
+        // Un entier est négatif exactement quand son bit de signe est à un.
+        self.mask(neon.vcltq_s64(low, zero), neon.vcltq_s64(high, zero))
+    }
+
+    /// `self * 2^k` pour des `k` entiers, `|k| <= 2000`, en deux multiplications pour que la
+    /// puissance de deux reste représentable.
+    #[inline(always)]
+    fn scale_pow2(self, k: Self) -> Self {
+        let half = (k * self.splat_like(0.5)).round();
+        self * half.pow2() * (k - half).pow2()
+    }
 
     /// Le masque des voies dont l'entier (`self` est entier, `|self| < 2^51`) a à un le bit
     /// `63 - SHIFT` : `SHIFT = 63` pour le bit 0, `SHIFT = 62` pour le bit 1.
     #[inline(always)]
-    pub(super) fn integer_bit_mask<const SHIFT: i32>(self) -> Mask {
+    fn integer_bit_mask<const SHIFT: i32>(self) -> Self::Mask {
         let neon = self.simd.neon;
         let (low, high) = self.integer_bits();
         // Le bit visé monte en position de signe, puis le décalage arithmétique le recopie sur
@@ -222,7 +244,7 @@ impl V4 {
     /// `e` est rendu en `f64`. Pour une valeur nulle, négative, sous-normale, infinie ou `NaN`,
     /// le résultat n'a pas de sens : l'appelant écarte ces voies.
     #[inline(always)]
-    pub(super) fn split_exponent(self) -> (Self, Self) {
+    fn split_exponent(self) -> (Self, Self) {
         let neon = self.simd.neon;
         let mantissa_mask = neon.vdupq_n_u64(MANTISSA_BITS);
         let one_bits = neon.vdupq_n_u64(ONE_BITS);
@@ -248,7 +270,7 @@ impl V4 {
 
     /// Valeur absolue.
     #[inline(always)]
-    pub(crate) fn abs(self) -> Self {
+    fn abs(self) -> Self {
         self.with(
             self.simd.neon.vabsq_f64(self.low),
             self.simd.neon.vabsq_f64(self.high),
@@ -257,7 +279,7 @@ impl V4 {
 
     /// Racine carrée.
     #[inline(always)]
-    pub(crate) fn sqrt(self) -> Self {
+    fn sqrt(self) -> Self {
         self.with(
             self.simd.neon.vsqrtq_f64(self.low),
             self.simd.neon.vsqrtq_f64(self.high),
@@ -270,7 +292,7 @@ impl V4 {
     /// il est plus proche de la valeur exacte. C'est le même que celui d'AVX2 (`vfmadd`), et que
     /// celui de `f64::mul_add`, que le chemin scalaire appelle.
     #[inline(always)]
-    pub(crate) fn mul_add(self, a: Self, b: Self) -> Self {
+    fn mul_add(self, a: Self, b: Self) -> Self {
         let neon = self.simd.neon;
         // `fmla` calcule `acc + x * y`.
         self.with(
@@ -281,7 +303,7 @@ impl V4 {
 
     /// Plus grand entier inférieur ou égal.
     #[inline(always)]
-    pub(crate) fn floor(self) -> Self {
+    fn floor(self) -> Self {
         self.with(
             self.simd.neon.vrndmq_f64(self.low),
             self.simd.neon.vrndmq_f64(self.high),
@@ -290,19 +312,19 @@ impl V4 {
 
     /// Le plus grand des deux. Une voie `NaN` rend la seconde opérande, comme `maxpd`.
     #[inline(always)]
-    pub(crate) fn max(self, other: Self) -> Self {
+    fn max(self, other: Self) -> Self {
         Self::select(self.gt(other), self, other)
     }
 
     /// Le plus petit des deux. Une voie `NaN` rend la seconde opérande, comme `minpd`.
     #[inline(always)]
-    pub(crate) fn min(self, other: Self) -> Self {
+    fn min(self, other: Self) -> Self {
         Self::select(self.lt(other), self, other)
     }
 
     /// Voie par voie : `self` si le masque est vrai, `other` sinon.
     #[inline(always)]
-    pub(crate) fn select(mask: Mask, if_true: Self, if_false: Self) -> Self {
+    fn select(mask: Mask, if_true: Self, if_false: Self) -> Self {
         let neon = mask.simd.neon;
         if_true.with(
             neon.vbslq_f64(mask.low, if_true.low, if_false.low),
@@ -312,33 +334,18 @@ impl V4 {
 
     /// Voies finies (ni `NaN` ni infinie).
     #[inline(always)]
-    pub(crate) fn is_finite(self) -> Mask {
+    fn is_finite(self) -> Mask {
         // Fini : `|x| <= f64::MAX`, faux pour `NaN` et pour l'infini.
         let largest = self.splat_like(f64::MAX);
         self.abs().le(largest)
     }
-}
 
-macro_rules! compare {
-    ($name:ident, $intrinsic:ident, $doc:literal) => {
-        impl V4 {
-            #[doc = $doc]
-            #[inline(always)]
-            pub(crate) fn $name(self, other: Self) -> Mask {
-                self.mask(
-                    self.simd.neon.$intrinsic(self.low, other.low),
-                    self.simd.neon.$intrinsic(self.high, other.high),
-                )
-            }
-        }
-    };
+    compare!(eq, vceqq_f64, "`self == other`, false if a lane is `NaN`.");
+    compare!(lt, vcltq_f64, "`self < other`, false if a lane is `NaN`.");
+    compare!(le, vcleq_f64, "`self <= other`, false if a lane is `NaN`.");
+    compare!(gt, vcgtq_f64, "`self > other`, false if a lane is `NaN`.");
+    compare!(ge, vcgeq_f64, "`self >= other`, false if a lane is `NaN`.");
 }
-
-compare!(eq, vceqq_f64, "`self == other`, false if a lane is `NaN`.");
-compare!(lt, vcltq_f64, "`self < other`, false if a lane is `NaN`.");
-compare!(le, vcleq_f64, "`self <= other`, false if a lane is `NaN`.");
-compare!(gt, vcgtq_f64, "`self > other`, false if a lane is `NaN`.");
-compare!(ge, vcgeq_f64, "`self >= other`, false if a lane is `NaN`.");
 
 macro_rules! arithmetic {
     ($trait:ident, $method:ident, $intrinsic:ident) => {
@@ -382,10 +389,12 @@ impl Mask {
             simd: self.simd,
         }
     }
+}
 
+impl super::vec::Mask for Mask {
     /// Voies vraies des deux masques.
     #[inline(always)]
-    pub(crate) fn and(self, other: Self) -> Self {
+    fn and(self, other: Self) -> Self {
         self.with(
             self.simd.neon.vandq_u64(self.low, other.low),
             self.simd.neon.vandq_u64(self.high, other.high),
@@ -394,7 +403,7 @@ impl Mask {
 
     /// Voies vraies d'au moins un des deux masques.
     #[inline(always)]
-    pub(crate) fn or(self, other: Self) -> Self {
+    fn or(self, other: Self) -> Self {
         self.with(
             self.simd.neon.vorrq_u64(self.low, other.low),
             self.simd.neon.vorrq_u64(self.high, other.high),
@@ -403,7 +412,7 @@ impl Mask {
 
     /// Les voies que le masque ne retient pas.
     #[inline(always)]
-    pub(crate) fn not(self) -> Self {
+    fn not(self) -> Self {
         let neon = self.simd.neon;
         let ones = neon.vdupq_n_u64(u64::MAX);
         self.with(
@@ -414,7 +423,7 @@ impl Mask {
 
     /// Un bit par voie, le bit 0 pour la première : les voies vraies.
     #[inline(always)]
-    pub(crate) fn bits(self) -> u32 {
+    fn bits(self) -> u32 {
         let neon = self.simd.neon;
         // Le bit de signe de chaque voie est son bit : on le ramène en position 0.
         let low = neon.vshrq_n_u64::<63>(self.low);
@@ -428,7 +437,7 @@ impl Mask {
 
     /// Au moins une voie est vraie.
     #[inline(always)]
-    pub(crate) fn any(self) -> bool {
+    fn any(self) -> bool {
         let neon = self.simd.neon;
         let either = neon.vorrq_u64(self.low, self.high);
         (neon.vgetq_lane_u64::<0>(either) | neon.vgetq_lane_u64::<1>(either)) != 0
@@ -436,7 +445,7 @@ impl Mask {
 
     /// Les quatre voies sont vraies.
     #[inline(always)]
-    pub(crate) fn all(self) -> bool {
+    fn all(self) -> bool {
         let neon = self.simd.neon;
         let both = neon.vandq_u64(self.low, self.high);
         neon.vgetq_lane_u64::<0>(both) == u64::MAX && neon.vgetq_lane_u64::<1>(both) == u64::MAX
@@ -446,6 +455,7 @@ impl Mask {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::simd::vec::Mask as _;
 
     const SAMPLES: [f64; 24] = [
         0.0,
