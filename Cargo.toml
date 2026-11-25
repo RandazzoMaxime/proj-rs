@@ -102,6 +102,9 @@ geo-types = { version = "0.7.16", optional = true }
 rusqlite = { version = "0.37.0", features = ["bundled", "serialize", "backup"] }
 # GeoTIFF grids. `deflate` only: the test grids are uncompressed, deflate, or deflate+predictor.
 tiff = { version = "0.10.3", default-features = false, features = ["deflate"] }
+# Inflates the pages of the embedded proj.db (`src/projdb_exe.rs`). Already in the tree through
+# tiff's deflate; a direct dependency only names it.
+miniz_oxide = { version = "0.9.1", default-features = false }
 # HTTPS grid download (feature `network`). 0.2.14 is rust-version 1.80 and uses SChannel on Windows.
 # A small HTTP/1.1 client sits on top so the tree does not pull ureq's ICU stack.
 native-tls = { version = "0.2.14", optional = true }

@@ -573,8 +573,7 @@ impl DatabaseContext {
             None => {
                 conn.execute_batch(&format!("ATTACH DATABASE ':memory:' AS {MAIN_SCHEMA}"))
                     .map_err(db_error)?;
-                conn.deserialize_bytes(MAIN_SCHEMA, projdb::embedded_bytes())
-                    .map_err(db_error)?;
+                projdb::deserialize_embedded(&mut conn, MAIN_SCHEMA).map_err(db_error)?;
                 "proj.db".to_owned()
             }
         };
@@ -1348,7 +1347,11 @@ impl DatabaseContext {
                 ),
                 &[],
             )?;
+            let found = rows.len();
             statements.extend(rows.into_iter().map(|row| row[0].text()));
+            if kind == "'trigger'" && found == 0 && self.is_stripped_embedded_image()? {
+                statements.extend(projdb::trigger_statements().map(str::to_owned));
+            }
         }
         let major = self.layout_version("DATABASE.LAYOUT.VERSION.MAJOR")?;
         if major > 0 {
@@ -1361,6 +1364,19 @@ impl DatabaseContext {
             ));
         }
         Ok(statements)
+    }
+
+    /// The read image of the embedded `proj.db` carries no trigger (`data/proj-triggers.sql`):
+    /// its schema has the `conversion` view the triggers write through, and no trigger at all.
+    fn is_stripped_embedded_image(&self) -> Result<bool, FactoryError> {
+        let rows = self.query(
+            &format!(
+                "SELECT count(*) FROM {}sqlite_master WHERE type = 'view' AND name = 'conversion'",
+                self.attachment.main_schema()
+            ),
+            &[],
+        )?;
+        Ok(rows.first().is_some_and(|row| row[0].text() != "0"))
     }
 
     fn layout_version(&self, key: &str) -> Result<i64, FactoryError> {

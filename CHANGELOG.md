@@ -6,6 +6,11 @@ rest is outside semver.
 
 ## Unreleased
 
+- Memory: the read-only `proj.db` embedded in proj-rs has no triggers (`data/proj-triggers.sql` holds
+  them and writable copies replay them). Creating a transform peaks at about 2.5 MiB less, and starts
+  faster. The embedded database is stored compressed, page by page (`data/proj.pages`): the binary
+  is 7.6 MB smaller, creation takes about 9 ms more once per process, the conversions do not change.
+  See [docs/PORTING-memory.md](docs/PORTING-memory.md).
 - x86-64 has an AVX-512 batch path (8 lanes of `f64`, `src/simd/v8.rs`) behind the new `avx512`
   cargo feature (off by default; also relayed by `proj-rs-georust`). On an AVX-512 CPU,
   `batch_path()` gives `avx512` and every batch kernel runs 8 points at a time: Transverse

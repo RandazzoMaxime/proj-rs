@@ -55,7 +55,7 @@ massif (tas), `smaps` (pages de fichier) et dhat sur chaque scénario.
   Avec `PROJ_AUX_DB`, les lignes auxiliaires sont copiées dans la base principale : chaque contexte
   garde sa copie, comme avant.
 - `convert_array`, `project_array` et `Transformer::forward_slice` / `inverse_slice` convertissent
-  **sur place**, par blocs de 4096 points : un seul bloc de `Xyzt` (128 Kio) vit, et le résultat de
+  **sur place**, par blocs de 1024 points : un seul bloc de `Xyzt` (32 Kio) vit, et le résultat de
   chaque bloc est réécrit dans la tranche de l'appelant. Aucune copie de la taille des données :
   31 MiB de moins que l'état de départ, 15 MiB de moins que le lot précédent, pour 1 M de points.
   C'est ce que fait `proj_trans_array`. Les valeurs ne changent pas d'un bit (`tests/convert_array_golden.rs`,
@@ -74,7 +74,7 @@ massif (tas), `smaps` (pages de fichier) et dhat sur chaque scénario.
 
 Un bloc fautif n'est pas écrit : on n'y marque pas les points en échec. Le premier point en échec
 et tous les suivants gardent donc leur entrée, et l'appelant ne peut pas lire la tranche comme un
-résultat après un `Err`. La taille du bloc (4096) n'est pas promise.
+résultat après un `Err`. La taille du bloc (1024 points, 32 Kio de `Xyzt`) n'est pas promise.
 
 Ce que fait PROJ : `proj_trans_array` traite **tous** les points, met `HUGE_VAL` aux quatre
 composantes d'un point en échec et rend le code d'erreur commun, ou `PROJ_ERR_COORD_TRANSFM` si les
@@ -369,3 +369,88 @@ garde à la fois la mémoire, la plateforme minimale (rust-version 1.83) et une 
 
 La piste ouverte : passer à `sqlite-plugin` le jour où le plancher monte à 1.85, avec les mêmes
 mesures (pic de RSS ci-dessus, `tests/shared_database.rs`, les tests de `projdb_exe`).
+
+## Les triggers hors de l'image en lecture
+
+Le pic de tas de la création (`4326 → 2154`, massif) est de 3,7 MiB, dont 2,6 MiB sont des structures
+de schéma SQLite : `proj.db` contient 38 triggers (193 Kio de SQL, un seul fait 128 Kio). SQLite
+analyse chaque trigger au premier chargement du schéma. Un trigger ne sert qu'aux insertions et aux
+mises à jour (contrôles des lignes) ; une lecture ne le déclenche jamais.
+
+- `data/proj.db` est désormais sans triggers ; `data/proj-triggers.sql` les garde, dans l'ordre
+  d'origine. `tools/proj-db/split_triggers.py` fait les deux fichiers, `--restore` refait la base
+  complète (le schéma rejoué est identique à celui de PROJ : 107 objets sur 107).
+- `projdb::copy_into` rejoue les triggers sur chaque copie modifiable (`execute_sql`, session
+  d'insertion). L'image en lecture seule n'en a aucun. Un test unitaire vérifie les deux cas.
+- `tools/proj-db/update.sh` compare la base complète (rejouée) et écrit les deux fichiers.
+
+Mesure (`perf_point … mem`, une passe, la même machine) :
+
+| | avant | après |
+|---|---:|---:|
+| pic `VmHWM` après création | 12 136 kB | 9 604 kB (-2,5 MiB) |
+| mémoire anonyme (tas) | 4 824 kB | 2 120 kB |
+| temps de création (processus, 5 passes) | 16 ms | 11 ms |
+
+La création d'une copie modifiable garde le même coût qu'avant, plus le rejeu des 38 triggers ; ce
+coût n'est pas mesuré ici. Les tests de la bibliothèque (239), `shared_database`,
+`unit_database_open`, `unit_capi_database_path`, `test_factory`, `parity`, `convert_array_golden`
+et `convert_iter` passent. Le footprint de `bench/footprint.json` n'est pas refait : il attend une
+mesure sur la CI.
+
+## Taille du code touché
+
+Le pic de création est aussi fait des pages de code du binaire : environ 4,5 Mo résidents (SQLite et
+libproj, surtout au chargement du schéma). Mesures (`perf_point … mem`, minimum de 3 passes ; le
+chemin par lots est le minimum de 3 passes d'un million de points) :
+
+| variante | binaire (texte) | pic de création | pages de code | lot 1 M |
+|---|---:|---:|---:|---:|
+| état précédent | 17,4 Mo | 9,55 Mo | 7,45 Mo | 92 ns |
+| LTO fat | 17,4 Mo | 9,69 Mo | 7,57 Mo | 94 ns |
+| `opt-level = "s"` (tout le crate) | 15,6 Mo | 8,35 Mo | 6,31 Mo | 104 ns |
+| SQLite sans les options inutiles, sans `-Os` | 17,5 Mo | 9,76 Mo | 7,42 Mo | 93 ns |
+| **SQLite en `-Os` (livré)** | **16,8 Mo** | **8,9 Mo** | **6,9 Mo** | **97 ns** |
+
+Le livré est `CFLAGS = "-Os"` dans `.cargo/config.toml` : SQLite sert à la création et aux
+requêtes, jamais dans les boucles de points. Le gain est d'environ 0,6 Mo sur le pic, pour un coût
+non mesurable sur le chemin par lots. Optimiser tout le crate pour la taille gagne 0,5 Mo de plus,
+mais ralentit le chemin par lots d'environ 12 % : refusé.
+
+Selon la compilation (même mesure, création seule) :
+
+- **Bibliothèque Rust, par défaut** : 8,9 Mo au pic.
+- **API C** (`libproj`, programme C de `bench/footprint/c/convert.c`) : 10,0 Mo au pic, soit environ
+  1,1 Mo de plus : la couche C et le contexte de libproj.
+- **Fonctionnalité `network`** : 10,7 Mo au pic, et 1,2 Mo de pages de fichier dès le démarrage,
+  car `libssl` et `libcrypto` sont liées dynamiquement et chargées même sans téléchargement. Elle est
+  désactivée par défaut, donc le cas courant n'en paie rien.
+
+## Pages compressées dans l'exécutable
+
+La base embarquée pèse 10,35 Mo, soit 60 % du binaire. `data/proj.pages` la stocke page par page en
+zlib (`tools/proj-db/pack_pages.py` : 2,68 Mo, ratio 3,9). La VFS (`src/projdb_exe.rs`) décompresse
+la page touchée par chaque lecture dans un tampon de pile : SQLite garde ses propres pages en cache,
+rien n'est gardé en tas ici.
+
+- Sur Linux, les flux compressés sont lus par `pread` dans le fichier de l'exécutable, comme les
+  octets bruts l'étaient : un flux lu à travers le mappage compterait dans le `RssFile`. Ailleurs, ou
+  si le fichier ne se vérifie pas, ils sont lus sur place.
+- Le chemin qui recopie toute la base (`create_with_auxiliary` sans chemin) la décompresse en
+  mémoire : rare, et transitoire.
+
+Mesures (même machine, minimum de 3 passes ; la référence est la version `-Os` non compressée) :
+
+| | référence (`-Os`) | pages compressées |
+|---|---:|---:|
+| binaire (texte) | 16,8 Mo | 9,2 Mo (-7,6 Mo) |
+| pic de création | 8,4 Mo | 8,9 Mo (+0,5 Mo) |
+| création, processus entier | 10,7 ms | 19,6 ms (+9 ms, une fois par processus) |
+| lot 1 M de points | 105 ns | 101 ns (dans le bruit, mesures alternées) |
+| point par point | 412 ns | 415 ns (dans le bruit, mesures alternées) |
+
+Le coût est au démarrage seulement : les conversions ne lisent jamais la base. Les tests de la
+bibliothèque (240, dont un test qui compare chaque page décompressée aux octets de `proj.db`), la
+parité, `shared_database`, `unit_database_open`, `unit_capi_database_path`, `test_factory`,
+`convert_array_golden` et `convert_iter` passent, et `no_unsafe` reste vert.
+`tools/proj-db/update.sh` régénère les trois fichiers.
