@@ -1,7 +1,8 @@
 # GMT contre la bibliothèque C de proj-rs
 
 GMT (Generic Mapping Tools) fait des cartes : projections, grilles, tracés PostScript. Sa suite de
-tests est l'une des plus grosses du monde géospatial : 1180 scripts `ctest`, chacun rend une image.
+tests est l'une des plus grosses du monde géospatial : 1240 scripts `ctest` (tests, scripts de la
+documentation, exemples), chacun rend une image comparée à une image de référence.
 
 GMT n'appelle pas libproj lui-même : ses projections de tracé sont les siennes (`gmt_proj.c`). Il
 l'atteint à travers GDAL, qu'il lie et consulte pour trois choses :
@@ -21,20 +22,51 @@ grille écrite (`gmt_export2proj4` donne une chaîne PROJ, que GDAL convertit en
 
 ## Méthode
 
-`tools/clients/gmt.sh` clone GMT au tag `6.5.0` (commit épinglé) et le compile une fois. GMT exige
-NetCDF, GDAL et GraphicsMagick (et Ghostscript pour rendre les PostScript) ; ses données GSHHG
-2.3.7 et DCW 2.2.0 sont téléchargées de leurs releases GitHub et vérifiées par leur sha256 (les
-mêmes que les recettes conda-forge). GMT n'appelle jamais `enable_testing()`, même quand
-`DO_TESTS=ON` : le script le fournit par un `CMAKE_PROJECT_INCLUDE` d'une ligne, sans toucher
-aux sources.
+`tools/clients/gmt.sh` clone GMT au tag `6.5.0` (commit épinglé), le compile une fois et
+l'installe. Les tests tournent comme dans la CI de GMT (`.github/workflows/tests.yml`), pour qu'un
+échec dise quelque chose de libproj :
 
-La suite tourne deux fois, avec les tests API et supplements activés (`DO_API_TESTS=ON`,
-`DO_SUPPLEMENT_TESTS=ON`) : une fois avec la libproj de PROJ 9.9.0 (la référence de
+- **les paquets** de `ci/install-dependencies-linux.sh` (`RUN_TESTS=true`, optionnels compris) :
+  NetCDF, GDAL, FFTW, PCRE, LAPACK, GLib, GraphicsMagick, Ghostscript, LaTeX
+  (`texlive-latex-base`, `texlive-binaries`, `texlive-fonts-recommended`), et `gawk`, que les
+  scripts supposent (`gspline_7.sh` écrit une chaîne avec `%.1lf`, que `mawk` refuse). Le script
+  les installe quand il tourne en root sous Debian ou Ubuntu ;
+- **la configuration** de `ci/config-gmt-unix.sh` : fils et OpenMP, les options longues en essai
+  (`USE_COMMON_LONG_OPTIONS`, `USE_MODULE_LONG_OPTIONS` : sans elles, les 46 tests `*-l2s.sh`
+  échouent), le serveur de données `static` (les jeux figés pour les tests), les exemples, et
+  `enable_testing()`, que GMT n'appelle jamais lui-même. Une différence : une construction
+  Release, quand la CI construit en Debug avec `--coverage`. Compilé en Debug, `psxy` écrit la
+  couleur de ses symboles `x` et `+` depuis une mémoire jamais initialisée
+  (`1.75e-152 9.06e+223 2.72e-109 C` dans `comparesymbols.ps`, `vec_choice.ps`,
+  `plot_symbols.ps`, `time_testing_5.ps`), que Ghostscript refuse (`/limitcheck`) : 4 tests
+  échouent alors des deux côtés, qui passent en Release ;
+- **les images de référence** : le dépôt DVC de GMT (DAGsHub) refuse la lecture anonyme (HTTP
+  401). Chaque release en publie la copie, `baseline-images.zip` (le workflow
+  `release-baseline-images.yml` fait un `dvc pull` du tag). Le script télécharge celle de 6.5.0,
+  l'épingle par son sha256, et `tools/clients/gmt_baselines.py` vérifie chaque sortie contre le
+  md5 que nomme son fichier `.dvc` (le md5 du fichier, ou celui de la liste du répertoire pour un
+  `.dir`) avant de la poser là où `gmtest` la lit : 352 fichiers `.dvc` sur 352, 1101 images ;
+- **les données distantes** : les 37 jeux de `ci-caches.yml` (le cache dont part la CI de GMT)
+  et les fichiers du cache (`gmt get -Dcache`) sont téléchargés une fois, du serveur `static`,
+  dans un répertoire personnel témoin, avant les passes. Avec un serveur fantôme comme `static`,
+  GMT 6.5.0 range ses données sous `$HOME/.gmt/static` quel que soit `GMT_USERDIR`
+  (`gmtremote_init_paths`), et `gmt get` y cherche sa table de hachage sous `server/`, où
+  `gmt which` ne l'a pas écrite : le script l'y copie, sans quoi `gmt get -Dcache` ne télécharge
+  rien. Chaque passe, et chaque relance isolée, part d'une copie de ce témoin au même chemin
+  (`HOME`). Sans lui, quatre tests parallèles qui téléchargent le même fichier en même temps en
+  lisent une moitié (une tuile JPEG 2000 tronquée, un `mississippi.txt` coupé) ;
+- **l'installation** de GMT en tête du `PATH` : les scripts des suppléments (`fzmodeler`...) en
+  viennent ;
+- `RUNNER_OS=Linux`, que `gmtest` lit, comme sur GitHub Actions, pour prendre les marques
+  `GMT_KNOWN_FAILURE_LINUX` des scripts (`met_uv.sh`) pour des échecs connus ;
+- `ctest --output-on-failure --force-new-ctest-process -j4 --timeout 480`, puis deux fois
+  `--rerun-failed`, comme la CI (`ctest || ctest --rerun-failed || ctest --rerun-failed`) :
+  l'issue d'un test est celle de sa dernière exécution, et les tests qu'une relance a changés
+  sont listés.
+
+La suite tourne deux fois : une fois avec la libproj de PROJ 9.9.0 (la référence de
 `tools/build-reference.sh`), une fois avec la nôtre (`capi/tests/dist.sh --release`), chacune en
-tête de `LD_LIBRARY_PATH`. Chaque passe part d'un répertoire utilisateur GMT vide
-(`GMT_USERDIR`) : les tests qui utilisent des données distantes (`@earth_relief_...`) les
-téléchargent du serveur de GMT dans chaque passe, et GDAL les décode (JPEG 2000, avec leur WKT)
-dans chaque passe. Un cache commun laissait la seconde passe sans ces appels à libproj.
+tête de `LD_LIBRARY_PATH`.
 
 ### Quelle libproj chaque passe charge
 
@@ -46,29 +78,29 @@ différence » à tort. `gmt.sh` le vérifie donc avant et pendant chaque passe,
 1. `ldd` du binaire `gmt`, avec le `LD_LIBRARY_PATH` de la passe, résout `libproj.so.25` vers le
    fichier de la passe ;
 2. aucun objet de la chaîne (`gmt`, `libgmt`, `libgdal`...) ne porte de `DT_RPATH` qui serait
-   cherché avant `LD_LIBRARY_PATH` : GMT est lié avec `-Wl,--enable-new-dtags`, comme dans
-   `pdal.sh`, et son chemin de construction est un `DT_RUNPATH` ;
+   cherché avant `LD_LIBRARY_PATH` : GMT est lié avec `-Wl,--enable-new-dtags`, et son chemin de
+   construction est un `DT_RUNPATH` ;
 3. un vrai `gmt mapproject -J+proj=utm` (qui atteint `proj_trans`) tourne sous `LD_DEBUG=libs`,
    et le `calling init:` de libproj doit être le fichier de la passe ;
-4. pendant tout le `ctest`, l'intercepteur `tools/clients/proj_count.c` (compilé par le script et
-   chargé par `LD_PRELOAD` dans chaque processus) écrit, pour chaque processus qui a une libproj
+4. pendant tout le `ctest`, relances comprises, l'intercepteur `tools/clients/proj_count.c`
+   (chargé par `LD_PRELOAD` dans chaque processus) écrit, pour chaque processus qui a une libproj
    en mémoire, le chemin réel de celle-ci (`dl_iterate_phdr`) : un seul chemin étranger fait
    échouer la passe, et moins de 2000 processus `gmt` journalisés aussi.
 
-Les relances isolées de `gmt_compare.py` (plus bas) passent par le même intercepteur, et leurs
-journaux sont vérifiés de la même façon.
+Les relances isolées de `gmt_compare.py` passent par le même intercepteur, et leurs journaux sont
+vérifiés de la même façon.
 
 ### Le comptage des appels à libproj
 
 `proj_count.c` est un petit `.c` d'outillage, hors des crates (`tests/no_unsafe` ne lit que les
-`*.rs`). Il transmet chaque appel tel quel à la fonction suivante (`dlsym(RTLD_NEXT)`) et compte,
-par processus, les appels et les points de `proj_create`, `proj_create_argv`,
-`proj_create_crs_to_crs`, `proj_create_crs_to_crs_from_pj`, `proj_create_from_wkt`,
-`proj_create_from_database`, `proj_create_operations`, `proj_trans`, `proj_trans_array`,
-`proj_trans_generic`, `proj_trans_bounds` et `proj_trans_bounds_3D`. Seuls comptent les appels du
-client : PROJ 9.9.0 appelle ses propres fonctions exportées par la PLT, proj-rs non, et un appel
-fait pendant un autre appel compté du même fil n'est pas compté, pour que les deux passes se
-comparent.
+`*.rs`). Il transmet chaque appel tel quel à la fonction suivante (`dlsym(RTLD_NEXT)`, ou, pour une
+libproj chargée avec `RTLD_LOCAL`, par son chemin) et compte, par processus, les appels et les
+points de `proj_create`, `proj_create_argv`, `proj_create_crs_to_crs`,
+`proj_create_crs_to_crs_from_pj`, `proj_create_from_wkt`, `proj_create_from_database`,
+`proj_create_operations`, `proj_trans`, `proj_trans_array`, `proj_trans_generic`,
+`proj_trans_bounds` et `proj_trans_bounds_3D`. Seuls comptent les appels du client : PROJ 9.9.0
+appelle ses propres fonctions exportées par la PLT, proj-rs non, et un appel fait pendant un autre
+appel compté du même fil n'est pas compté, pour que les deux passes se comparent.
 
 ### La comparaison
 
@@ -80,21 +112,20 @@ comparent.
    répertoire d'un test qui réussit : la copie de `gmtest` du répertoire de construction est
    modifiée pour le garder (son verdict ne change pas), si bien que les fichiers des tests
    réussis sont comparés aussi. Un répertoire présent d'un seul côté est une différence ;
-   - octet par octet ; à défaut, normalisé : les PostScript sans leur ligne `%%CreationDate`,
-     les netCDF par leur `ncdump` sans l'octet de la variable `grid_mapping` (un `char`
-     scalaire que GMT n'initialise jamais : deux exécutions de référence y diffèrent) ;
+   - octet par octet ; à défaut, normalisé : les PostScript sans leur ligne `%%CreationDate` ni
+     les noms de fichiers temporaires de leurs commentaires `%@GMT:`, les netCDF par leur `ncdump`
+     sans l'octet de la variable `grid_mapping` (un `char` scalaire que GMT n'initialise jamais) ;
    - un PostScript dont les octets diffèrent encore est rendu à 200 dpi par GraphicsMagick et
      comparé avec la limite RMS 0.003 de `gmtest` ; sous la limite, il n'échoue pas mais est
      compté et listé à part ;
 3. tout ce qui diffère encore, ou qu'une seule passe a écrit, est relancé **isolément**, une fois
-   avec chaque bibliothèque, et la paire fraîche est comparée avec la même règle : GMT n'écrit
-   pas toujours les mêmes fichiers dans une passe parallèle chargée (un psxy au bout d'un tube
-   peut sauter sa couche). Si la paire fraîche ne s'accorde pas, le test est relancé une
-   deuxième fois avec la référence : si les deux exécutions de référence diffèrent, GMT n'est
-   pas déterministe là et aucun verdict sur la bibliothèque n'est possible ; sinon, une deuxième
-   avec proj-rs : si elle diffère de la première et que le test n'appelle jamais libproj, c'est
-   encore GMT ; sinon la différence est réelle et fait échouer la comparaison. Une relance qui
-   n'écrit pas le fichier ne prouve rien : elle compte comme une différence ;
+   avec chaque bibliothèque, et la paire fraîche est comparée avec la même règle. Si la paire
+   fraîche ne s'accorde pas, le test est relancé une deuxième fois avec la référence : si les
+   deux exécutions de référence diffèrent, GMT n'est pas déterministe là et aucun verdict sur la
+   bibliothèque n'est possible ; sinon, une deuxième avec proj-rs : si elle diffère de la première
+   et que le test n'appelle jamais libproj, c'est encore GMT ; sinon la différence est réelle et
+   fait échouer la comparaison. Une relance qui n'écrit pas le fichier ne prouve rien : elle
+   compte comme une différence ;
 4. les appels à libproj de chaque test : mêmes nombres d'appels et de points par fonction dans
    les deux passes.
 
@@ -102,13 +133,14 @@ Il faut au moins 1100 tests et 3000 fichiers comparés, sinon la comparaison éc
 comparés : les PDF (Ghostscript y écrit sa date ; ils sont convertis des PostScript, qui le sont),
 `gmt.history` et `*.tag` (horodatage) et les scripts eux-mêmes.
 
-## Résultat
+## Résultat (le 2026-11-25)
 
 Machine : Linux x86-64 (Ubuntu 24.04), 4 vCPU, 15 Go de RAM. GMT 6.5.0 (commit `6da8ee2d`),
-GDAL 3.8.4 d'Ubuntu (`libgdal.so.34.3.8.4`), GSHHG 2.3.7, DCW 2.2.0, Ghostscript 10.02.1,
-GraphicsMagick 1.3.42, avec le réseau (les données distantes de GMT sont téléchargées). La
-libproj 9.4.0 du système n'est chargée par aucune passe. Exécution complète de `gmt.sh` :
-80 minutes (construction de GMT, deux passes `ctest -j4` de 884 et 855 s, relances isolées).
+Release, GDAL 3.8.4 d'Ubuntu (`libgdal.so.34.3.8.4`), GSHHG 2.3.7, DCW 2.2.0, Ghostscript 10.02.1,
+GraphicsMagick 1.3.42, images de référence de la release 6.5.0, données du serveur `static`.
+proj-rs au commit `07edeec` de `main`. La libproj 9.4.0 du système n'est chargée par aucune passe.
+Exécution complète de `gmt.sh` : 58 minutes (construction, téléchargement du témoin, deux passes
+`ctest -j4` de 1224 et 1271 s relances comprises, relances isolées).
 
 Bibliothèque chargée, vérifiée dans chaque passe (sortie du script) :
 
@@ -118,89 +150,111 @@ ref: no DT_RPATH that could load another libproj (gmt: RUNPATH)
 ref: gmt mapproject -J+proj=utm: 3 45 -> 500000	4982950.40023
 ref: LD_DEBUG=libs: calling init: /home/user/gmt-work/run/ref-prefix/lib/libproj.so.25
 ref: interposer: /home/user/gmt-work/run/ref-prefix/lib/libproj.so.25.9.9.0 mapped, proj_create=8/0 proj_create_crs_to_crs_from_pj=2/0 proj_trans=5/5
-ref: 16914 processes mapped a libproj (16862 of them gmt), all /home/user/gmt-work/run/ref-prefix/lib/libproj.so.25.9.9.0
+ref: 18384 processes mapped a libproj (18332 of them gmt), all /home/user/gmt-work/run/ref-prefix/lib/libproj.so.25.9.9.0
 ours: ldd gmt: libproj.so.25 => /home/user/gmt-work/run/ours/lib/libproj.so.25
 ours: no DT_RPATH that could load another libproj (gmt: RUNPATH)
 ours: gmt mapproject -J+proj=utm: 3 45 -> 500000	4982950.40023
 ours: LD_DEBUG=libs: calling init: /home/user/gmt-work/run/ours/lib/libproj.so.25
 ours: interposer: /home/user/gmt-work/run/ours/lib/libproj.so.25 mapped, proj_create=8/0 proj_create_crs_to_crs_from_pj=2/0 proj_trans=5/5
-ours: 16918 processes mapped a libproj (16866 of them gmt), all /home/user/gmt-work/run/ours/lib/libproj.so.25
-reruns ref: 1023 processes mapped a libproj, all .../ref-prefix/lib/libproj.so.25.9.9.0
-reruns ours: 708 processes mapped a libproj, all .../ours/lib/libproj.so.25
+ours: 18420 processes mapped a libproj (18368 of them gmt), all /home/user/gmt-work/run/ours/lib/libproj.so.25
+reruns ref: 821 processes mapped a libproj, all .../ref-prefix/lib/libproj.so.25.9.9.0
+reruns ours: 700 processes mapped a libproj, all .../ours/lib/libproj.so.25
 ```
 
 | | PROJ 9.9.0 | proj-rs |
 |---|---:|---:|
-| Verdicts ctest (1180 listés, 1180 lus de chaque côté) | 130 réussis, 1050 échoués | idem, test par test |
-| Fichiers comparés (dont PostScript) | 4673 (1040) | 4673 (1040) |
+| Tests (1240 listés, 1240 lus de chaque côté ; `ex53` désactivé par GMT) | 1240 | 1240 |
+| Réussis | 1230 | 1228 |
+| Échoués | 10 | 12 |
+| dont échecs de la première exécution rattrapés par `--rerun-failed` | 17 | 12 |
+| Échecs connus de GMT (`GMT_KNOWN_FAILURE`, comptés réussis) | 15 | 15 |
+| Fichiers comparés (dont PostScript) | 5900 (1103) | 5900 (1103) |
 | Répertoires de test d'un seul côté | 0 | 0 |
-| Appels à libproj | 29 tests, 74 processus | 29 tests, 75 processus |
+| Appels à libproj | 18 tests, 63 processus | 18 tests, 63 processus |
 
-Les 1050 échecs sont les mêmes des deux côtés : les baselines DVC sont absentes.
+**Aucune différence réelle entre PROJ 9.9.0 et proj-rs** : `gmt_compare.py` conclut « every test
+has the same outcome, every file the same content and every test the same libproj calls with both
+libraries ». Les 4 tests dont l'issue diffère entre les deux passes n'appellent pas libproj, et
+leur différence se défait ou se reproduit avec une seule bibliothèque :
 
-Fichiers qui diffèrent entre les deux passes complètes :
+- `potential/growth_o` et `psmask/masking` échouent dans la passe proj-rs (y compris ses deux
+  relances parallèles) et réussissent dans la passe de référence ; relancés seuls, ils réussissent
+  avec les deux bibliothèques, octet pour octet (GMT sous charge) ;
+- `psxy/gaps` et `psxy/linetrim` : deux exécutions isolées avec la même bibliothèque donnent déjà
+  des issues différentes (plus bas).
 
-- **3 PostScript** aux octets différents mais au RMS 0 (listés à part, pas des échecs) :
-  `doc/scripts/GMT_App_J_1`, `grdblend/center_cf_g` (la paire isolée est identique) et
-  `grdblend/center_bf_p` (la paire isolée diffère encore d'octets, RMS 0) ;
-- **34** fichiers que la paire isolée rend identiques : le bruit de GMT sous charge
-  (`grdfill/*`, `grdfft/bworthxy`, `grdview/texture2_*`, `grdcut/origin`...) ;
-- **18** fichiers où deux exécutions isolées avec la même bibliothèque diffèrent déjà : GMT n'y
-  est pas déterministe, aucun verdict sur la bibliothèque n'est possible. Ce sont
-  `byteswap/bswap16` et `bswap32` (10 fichiers : leurs données viennent de `/dev/urandom`), et 8
-  fichiers de 7 tests : `filter1d/smooth_track`, `grdmath/reduce` (et son `tmp.grd`), `grdtrack/crosstrack_geo`,
-  `psxy/linearrow`, `psxy/linetrim`, `sample1d/splines`, où deux exécutions de référence
-  diffèrent, et `potential/growth_p`, où deux exécutions avec proj-rs diffèrent dans un test
-  qui n'appelle jamais libproj ;
-- **2 différences réelles**, un défaut de proj-rs (plus bas) : `grdproject/units/c.nc` et
-  `i.nc`.
+`grdproject/units` (`c.nc`, `i.nc`), la différence du banc précédent, est identique octet pour
+octet : le `spatial_ref` de la grille vaut
+`DATUM["unknown", SPHEROID["unknown",6378137,298.257220143428]]` avec les deux bibliothèques,
+celui que PROJ 9.9.0 construit pour `+a=6378137.000 +b=6356752.314 +ellps=WGS84 +datum=WGS84`
+(#361).
 
-Appels à libproj (intercepteur, passe de référence) : `proj_create` 270,
-`proj_create_crs_to_crs_from_pj` 87, `proj_create_from_database` 54, `proj_create_from_wkt`
-173, `proj_trans` 28415 appels d'un point ; aucun `proj_trans_generic`, `proj_trans_array`,
-`proj_trans_bounds` ni `proj_create_crs_to_crs` : GDAL 3.8 transforme point par point. Ils
-viennent de 29 tests : `grdimage/grdimage_img_tif` (26331 `proj_trans`, 45 WKT lus),
-`mapproject/proj4` (2084 `proj_trans`), les autres `grdimage` (`transp_mix`, `marbles`,
-`image_vartrans`, `noJshiftimg`, `imgshade`, `twogrids`, `rounding`), `grdmix/grid2img`,
-`grdview/texture2_*`, `grdproject/units`, `img/imgmap`, `doc/scripts/GMT_mixing`, et les tests
-qui lisent un jeu distant (le WKT de ses tuiles JPEG 2000). Trois tests ont des comptes
-différents entre les passes (`doc/scripts/GMT_tut_11`, `GMT_tut_18`,
-`grdview/texture2_modern`) : dans une passe parallèle, c'est le premier test qui demande un jeu
-distant qui le télécharge et le convertit ; rejoués seuls, chacun fait les mêmes appels avec les
-deux bibliothèques. Le total diffère de 4 `proj_create_from_wkt` pour la même raison.
+Appels à libproj (intercepteur, mêmes nombres dans les deux passes) : `proj_create` 274,
+`proj_create_crs_to_crs_from_pj` 89, `proj_create_from_database` 38, `proj_create_from_wkt` 105,
+`proj_trans` 28415 appels d'un point ; aucun `proj_trans_generic`, `proj_trans_array`,
+`proj_trans_bounds` ni `proj_create_crs_to_crs` : GDAL 3.8 transforme point par point. Ils viennent
+de 18 tests : `grdimage/grdimage_img_tif` (26331 `proj_trans`, 45 WKT lus), `mapproject/proj4`
+(2084 `proj_trans`), les autres `grdimage` (`transp_mix`, `marbles`, `image_vartrans`,
+`noJshiftimg`, `imgshade`), `grdmix/grid2img`, `grdview/texture2_classic` et `_modern`,
+`grdproject/units`, `img/imgmap`, `img/imgtrack`, `doc/examples/ex52`, `doc/scripts/GMT_mixing`,
+`gmtmex/WL_example_2` et `_3`, `psxy/categorical`. Les jeux distants étant téléchargés une fois
+dans le témoin avant les passes, leur conversion par GDAL (le WKT des tuiles JPEG 2000) n'est plus
+faite dans chaque passe : d'où 105 `proj_create_from_wkt` au lieu des 173 du banc précédent.
 
-### Le défaut trouvé : `+datum=` passe devant `+a`/`+b`
+### Les 10 échecs de la référence, tous aussi échecs avec proj-rs
 
-Pour une grille projetée, GMT écrit son SRS en chaîne PROJ (`gmt_export2proj4`), avec à la fois
-les demi-axes arrondis au millimètre et l'ellipsoïde et le datum nommés :
-`+proj=merc ... +a=6378137.000 +b=6356752.314 +ellps=WGS84 +datum=WGS84 +units=m +no_defs`.
-GDAL la convertit en WKT pour l'attribut `spatial_ref` du netCDF. PROJ 9.9.0 donne la priorité
-aux nombres : `DATUM["unknown", SPHEROID["unknown",6378137,298.257220143428]]`. proj-rs garde le
-datum nommé et jette `+a`/`+b` : `DATUM["WGS_1984", SPHEROID["WGS 84",6378137,298.257223563]]`.
-Pour reproduire, avec la référence de `tools/build-reference.sh` et le `projinfo` de proj-rs :
+Aucun de ces tests n'appelle libproj (intercepteur), et leurs fichiers sont identiques dans les
+deux passes, sauf ceux des deux derniers points.
 
-```bash
-S="+proj=longlat +a=6378137 +b=6356752.314 +datum=WGS84 +type=crs"
-PROJ_DATA=target/proj-reference/build/data target/proj-reference/build/bin/projinfo -o WKT1_GDAL -q "$S"
-cargo run --release --bin projinfo -- -o WKT1_GDAL -q "$S"
-```
+| Test | Cause | Preuve |
+|---|---|---|
+| `grdinterpolate/slices`, `slices_file` | le fichier distant n'existe plus | le script fait `curl -s http://ds.iris.edu/spudservice/data/17996723 -o S362ANI_kmps.nc` ; IRIS répond 301 vers `https://...`, qui répond 404 : `curl` écrit 167 octets de HTML |
+| `filter1d/mfilter` | le fichier distant n'existe plus | `filter1d [ERROR]: Libcurl Error: HTTP response code said error` sur `https://scrippsco2.ucsd.edu/assets/data/atmospheric/stations/in_situ_co2/weekly/weekly_in_situ_co2_mlo.csv` (404 au `curl` direct) |
+| `psxy/urlquakes` | données vivantes | la requête `earthquake.usgs.gov/fdsnws/event/1/query.csv` (janvier 2016, M ≥ 4.5) rend le catalogue révisé de l'USGS : RMS 0.0035 contre 0.003 |
+| `greenspline/gspline_7` | le script suppose le `grep` de macOS | `grep "^${X}\t"` : GNU grep 3.11 ne lit pas `\t` comme une tabulation (`printf -- '-1\t3\n' \| grep '^-1\t'` ne trouve rien), `Y` reste vide, puis `gmtmath [ERROR]: Operation "NEG" requires 1 operands` |
+| `grdvector/shrink` | image | RMS 0.0042 contre 0.003, déterministe (même PostScript dans les deux passes) |
+| `grdtrack/crosstrack_geo` | image | RMS 0.0172 contre 0.003, déterministe |
+| `pscontour/thickness` | image | RMS 0.0206 contre la limite 0.02 du script, déterministe |
+| `psxy/linearrow` | GMT non déterministe | `psxy [ERROR]: Found no history for option -R` (plus bas) |
+| `psxy/linetrim` | GMT non déterministe | idem ; il réussit dans la passe proj-rs, échoue dans la référence, et deux exécutions isolées avec proj-rs donnent des issues différentes |
 
-Sans `+datum` (`+a +b` seuls, ou avec `+ellps=WGS84`) les deux donnent l'ellipsoïde `unknown` ;
-avec `+datum=WGS84` et `+rf=` au lieu de `+b`, même écart. Par GDAL, comme GMT :
-`gdalsrsinfo -o wkt1 "<chaîne>"` avec chacune des deux bibliothèques en tête de
-`LD_LIBRARY_PATH`. Le moteur ne lisait pas non plus `+R`, `+a`, `+b` ni un `+ellps` placé avant
-`+datum=` (jusqu'à 23 km d'écart en Mercator avec `+R`). Les deux sont corrigés depuis
-(`tests/datum_ellipsoid_override.rs`) : `projinfo` donne maintenant le WKT de PROJ 9.9.0 pour la
-chaîne exacte de GMT. Les chiffres ci-dessus sont ceux de la passe d'avant le correctif.
+Pour `shrink`, `crosstrack_geo` et `thickness`, l'image diffère de la référence de GMT de la même
+façon avec les deux bibliothèques, sans appel à libproj : la cause est dans le rendu ou la chaîne
+de compilation, par rapport aux machines qui ont produit les références (la CI de GMT rend avec
+le Ghostscript 10.02.0 de conda-forge, ce banc avec le 10.02.1 d'Ubuntu). Elle n'est pas
+vérifiée plus avant.
 
-### Ce qui avait faussé la première version de ce banc
+### GMT n'est pas déterministe en 18 fichiers
 
-La version précédente concluait « aucune différence » sur 3974 fichiers. Elle ne prouvait pas
-que chaque passe chargeait la bonne bibliothèque, ne comparait pas les fichiers des tests
-réussis (supprimés par `gmtest`), acceptait un PostScript au seul RMS, sautait sans le dire un
-répertoire présent d'un seul côté, et concluait à l'accord quand aucune relance n'écrivait le
-fichier. Elle partageait aussi `~/.gmt` entre les passes : la première téléchargeait et
-convertissait les données distantes, la seconde les trouvait en cache et ne faisait pas ces
-appels à libproj. L'écart de `grdproject/units` n'y figurait pas ; il apparaît ici (GDAL 3.8.4
-d'Ubuntu, quand la version précédente annonçait GDAL 3.10.3 de Debian) et se reproduit hors de
-GMT, avec `projinfo`.
+Deux exécutions isolées avec la même bibliothèque y diffèrent déjà (`gmt_compare.py`, « two
+reference runs: differs ») ; aucun verdict sur la bibliothèque n'est possible, et aucun de ces
+tests n'appelle libproj :
+
+- `byteswap/bswap16` et `bswap32` (10 fichiers) : leurs données viennent de `/dev/urandom` ;
+- `psxy/gaps` (5 fichiers : `gaps_ascii.ps` au RMS 0.1136 entre deux exécutions de référence,
+  `gaps_netcdf.ps` écrit par une exécution et pas par l'autre, leurs `_diff.png`, `gmt.conf`) ;
+- `psxy/linearrow/linearrow.ps` (RMS 0.1329 entre deux exécutions de référence) et
+  `psxy/linetrim` (`linetrim.ps`, RMS 0.0589 entre deux exécutions de référence, et
+  `linetrim_diff.png`).
+
+Pour `linearrow`, `linetrim` et `gaps`, la cause est dans GMT : `gmt math ... | gmt psxy -R -J`
+lance les deux modules en même temps, et `gmtinit_put_history` (`gmt_init.c`) ouvre `gmt.history`
+par `fopen (hfile, "w")`, ce qui le vide, avant d'en prendre le verrou `fcntl` ; le `psxy` qui lit
+l'historique à ce moment ne trouve pas `-R` (`Found no history for option -R`) et la couche
+manque.
+
+Sont aussi listés à part, sans échec : 18 PostScript aux octets différents dans les passes mais
+identiques dans la paire isolée, hors date et noms temporaires (RMS 0, sauf
+`psevents_action.ps` à 0.0021), et 6 fichiers que la paire isolée rend identiques (le bruit de
+GMT sous charge : `growth_o`, `masking`, `mgd77/convert/12345678.nc`, `psevents_action_diff.png`).
+
+### Ce que le banc ne mesurait pas avant
+
+La version précédente de ce document (1180 tests, 130 réussis, 1050 échoués des deux côtés)
+comparait les deux passes sans images de référence (le dépôt DVC répondait 404), sans les
+options longues ni les exemples, avec les données du serveur courant au lieu du serveur `static`
+(SRTM15 v2.7, plus récent que les références : RMS 0.02 à 0.07 sur `genper`, `grdcontour`,
+`grdfill`...), sans les scripts des suppléments sur le `PATH`, avec `mawk`, et sans relance des
+échecs. Chaque passe partait d'un `GMT_USERDIR` vide, que le serveur `static` ignore ; ses tests
+téléchargeaient en parallèle les mêmes fichiers et en lisaient parfois une moitié. Ces causes sont
+réglées ci-dessus ; il reste les 10 échecs du tableau, communs aux deux bibliothèques.

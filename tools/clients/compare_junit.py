@@ -3,7 +3,9 @@
 
 Prints the tests that pass with the reference and fail with proj-rs, grouped by cause, and the
 tests the reference ran that proj-rs did not (a module that fails to import runs none of its
-tests). Writes the full list next to <ours.xml>, as <ours.xml>.regressions.tsv. Standard library only.
+tests). Writes the full list next to <ours.xml>, as <ours.xml>.regressions.tsv. Exits with 1 when
+a test has a different outcome (pass, fail, skip, absent) in the two reports. Standard library
+only.
 """
 import collections
 import re
@@ -61,12 +63,19 @@ def main():
     print(f"pass with the reference, fail with proj-rs: {len(regressions)}")
     print(f"pass with the reference, not run with proj-rs: {len(not_run)}")
     print(f"pass with proj-rs, fail with the reference: {len(gains)}")
+    differ = sorted(n for n in set(reference) | set(ours)
+                    if reference.get(n, ("absent",))[0] != ours.get(n, ("absent",))[0])
+    print(f"tests whose outcome differs: {len(differ)}")
+    for name in differ:
+        print(f"  {name}: {reference.get(name, ('absent',))[0]} vs {ours.get(name, ('absent',))[0]}")
     print()
     for label, count in collections.Counter(cause(m) for m in regressions.values()).most_common():
         print(f"{count:5d}  {label}")
     with open(sys.argv[2] + ".regressions.tsv", "w", encoding="utf-8") as out:
         for name in sorted(regressions):
             out.write(f"{name}\t{cause(regressions[name])}\t{regressions[name]}\n")
+    if differ:
+        sys.exit(1)
 
 
 if __name__ == "__main__":
