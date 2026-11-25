@@ -188,8 +188,10 @@ cargo run --release --bin projinfo -- -o WKT1_GDAL -q "$S"
 Sans `+datum` (`+a +b` seuls, ou avec `+ellps=WGS84`) les deux donnent l'ellipsoïde `unknown` ;
 avec `+datum=WGS84` et `+rf=` au lieu de `+b`, même écart. Par GDAL, comme GMT :
 `gdalsrsinfo -o wkt1 "<chaîne>"` avec chacune des deux bibliothèques en tête de
-`LD_LIBRARY_PATH`. Ce défaut n'est pas corrigé ici : le banc le rapporte et échoue
-(`FAILED: files`).
+`LD_LIBRARY_PATH`. Le moteur ne lisait pas non plus `+R`, `+a`, `+b` ni un `+ellps` placé avant
+`+datum=` (jusqu'à 23 km d'écart en Mercator avec `+R`). Les deux sont corrigés depuis
+(`tests/datum_ellipsoid_override.rs`) : `projinfo` donne maintenant le WKT de PROJ 9.9.0 pour la
+chaîne exacte de GMT. Les chiffres ci-dessus sont ceux de la passe d'avant le correctif.
 
 ### Ce qui avait faussé la première version de ce banc
 
