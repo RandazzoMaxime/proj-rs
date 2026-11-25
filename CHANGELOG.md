@@ -53,6 +53,29 @@ rest is outside semver.
     NULL with nothing logged for a wrong type where PROJ logs nothing, and PROJ's own text
     otherwise (`vert_crs is not a VerticalCRS`, `source_crs is not a CRS or a
     CoordinateMetadata`...).
+- The R client bench (`tools/clients/r.sh`) now agrees on all 27 files, the 99 `Cannot open`
+  lines included (4 in sf, 95 in terra, as PROJ 9.9.0), where 154 were logged in terra's suite
+  (`docs/CLIENTS-r.md`, points 7 to 9):
+  - a context keeps the answers of `lookForGridInfo` as PROJ does (`cacheGridInfo_`): an LRU of
+    128 keys, pruned once it passes 138, keyed by the grid name, the network state and
+    `considerKnownGridsAsAvailable`, shared by the clones of a `ProjBuilder` and renewed where
+    PROJ makes a new `DatabaseContext` (`proj_context_clone`, `proj_context_create`,
+    `proj_context_set_database_path`, `proj_cleanup`); a grid that did not open is not tried
+    again while its key is kept, and `proj_download_file` drops the keys of the file. The sort,
+    the grid rejection (now network off, as `DisableNetwork`: it opened the 49 grids of
+    `EPSG:5070` to `EPSG:4326`), the lookup before a network open,
+    `proj_coordoperation_get_grid_used_count` (once per object) and
+    `proj_coordoperation_is_instantiable` read it in PROJ's order, so the key sequence and the
+    counts of a series of calls match the reference (`capi/tests/run.sh grid_miss_cache`,
+    `tests/grid_miss_cache.rs`, `docs/PORTING-grid-info-cache.md`);
+  - `proj_create_crs_to_crs` and `proj_create_crs_to_crs_from_pj` under `ONLY_BEST=NO` (the
+    `only_best_default = off` of PROJ's `proj.ini`) with the network on sorted the candidates on
+    the disk and dropped those with a missing grid, opening each grid at creation; PROJ asks
+    `KNOWN_AVAILABLE` there and keeps them, so GDAL's `EPSG:5070` to `EPSG:4326` now fails with
+    `PROJ_ERR_OTHER_NETWORK_ERROR` in the north as PROJ does, instead of using a Helmert;
+  - a grid deferred at creation with the network on is opened at the first point only, its
+    failure kept for the later points (`defer_grid_opening`), instead of a new open and a new
+    `Cannot open` line at each point.
 - Memory: the read-only `proj.db` embedded in proj-rs has no triggers (`data/proj-triggers.sql` holds
   them and writable copies replay them). Creating a transform peaks at about 2.5 MiB less, and starts
   faster. The embedded database is stored compressed, page by page (`data/proj.pages`): the binary

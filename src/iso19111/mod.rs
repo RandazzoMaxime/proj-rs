@@ -40,7 +40,6 @@ mod projfam;
 mod projstring;
 mod property;
 pub(crate) use projstring::PRIME_MERIDIANS;
-pub(crate) use select::RemoteGrids;
 pub(crate) use wkt::format_g;
 mod search_cache;
 mod select;

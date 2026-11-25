@@ -5,8 +5,9 @@ use std::ffi::{c_char, c_int};
 
 use proj_rs::iso19111::{
     AlternativeGridNames, BallparkUse, BoundingBox, CoordinateOperation,
-    CoordinateOperationContext, CrsExtentUse, GridAvailabilityUse, IntermediateCrsUse, NameMatch,
-    ObjectDomain, ParameterValue, SpatialCriterion, SupersededOperations, UserObject,
+    CoordinateOperationContext, CrsExtentUse, GridAvailabilityUse, GridDescription,
+    IntermediateCrsUse, NameMatch, ObjectDomain, ParameterValue, SpatialCriterion,
+    SupersededOperations, UserObject,
 };
 use proj_rs::unstable::Proj;
 
@@ -453,7 +454,12 @@ pub extern "C" fn proj_coordoperation_is_instantiable(
         let Some(database) = context.database() else {
             return 0;
         };
-        c_int::from(operation.is_proj_instantiable(&database, known_grids(context)))
+        let known = known_grids(context);
+        c_int::from(
+            context
+                .builder
+                .within(|| operation.is_proj_instantiable(&database, known)),
+        )
     })
 }
 
@@ -770,21 +776,38 @@ pub extern "C" fn proj_coordoperation_get_grid_used_count(
     coordoperation: *const PJ,
 ) -> c_int {
     guard(0, || {
-        let context = context(ctx);
-        let Some((_, operation)) = operation_of(
+        grids_of(
             ctx,
             coordoperation,
             "proj_coordoperation_get_grid_used_count",
-        ) else {
-            return 0;
-        };
-        let Some(database) = context.database() else {
-            return 0;
-        };
-        operation
-            .grids_needed(&database, known_grids(context))
-            .map_or(0, |grids| c_int::try_from(grids.len()).unwrap_or(0))
+        )
+        .map_or(0, |(_, grids)| c_int::try_from(grids.len()).unwrap_or(0))
     })
+}
+
+/// The grids of an operation, looked up on the first call with the network state of the context
+/// and its endpoint, then kept on the object, as PROJ keeps `coordoperation->gridsNeeded`
+/// (c_api.cpp:7905-7935). A failed lookup is an empty list, also kept.
+fn grids_of<'a>(
+    ctx: *mut PJ_CONTEXT,
+    coordoperation: *const PJ,
+    who: &str,
+) -> Option<(&'a mut Pj, Vec<GridDescription>)> {
+    let context = context(ctx);
+    let (object, operation) = operation_of(ctx, coordoperation, who)?;
+    if let Some(grids) = &object.grids_needed {
+        let grids = grids.clone();
+        return Some((object, grids));
+    }
+    let database = context.database()?;
+    let endpoint = context.builder.get_url_endpoint().unwrap_or_default();
+    let known = known_grids(context);
+    let grids = context
+        .builder
+        .within(|| operation.grids_needed_at(&database, known, &endpoint))
+        .unwrap_or_default();
+    object.grids_needed = Some(grids.clone());
+    Some((object, grids))
 }
 
 #[unsafe(no_mangle)]
@@ -802,16 +825,8 @@ pub extern "C" fn proj_coordoperation_get_grid_used(
 ) -> c_int {
     guard(0, || {
         let context = context(ctx);
-        let Some((object, operation)) =
-            operation_of(ctx, coordoperation, "proj_coordoperation_get_grid_used")
-        else {
-            return 0;
-        };
-        let Some(database) = context.database() else {
-            return 0;
-        };
-        let endpoint = context.builder.get_url_endpoint().unwrap_or_default();
-        let Ok(grids) = operation.grids_needed_at(&database, known_grids(context), &endpoint)
+        let Some((object, grids)) =
+            grids_of(ctx, coordoperation, "proj_coordoperation_get_grid_used")
         else {
             return 0;
         };

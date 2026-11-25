@@ -6,7 +6,8 @@
 #   fork datadir geodesic proj_string_type projjson_objects horizontal_datum string_lifetime
 #   unnamed_operation embedded_db pj_info_order normalize_operation latin1_input
 #   crs_to_crs_describe create_any_object export_objects derived_temporal last_used_operation
-#   deriving_conversion single_crs_cs grid_used network_grids network_listing missing_input
+#   deriving_conversion single_crs_cs grid_used network_grids network_listing grid_miss_cache
+#   missing_input
 #   crs_to_crs_area step_error_log
 #   proj_based_operation proj_string_refusal invalid_operations errno_parity crs_proj_strings
 #   wkt_warnings wkt_round_trip c_api
@@ -36,7 +37,7 @@ tests=("$@")
                                   latin1_input crs_to_crs_describe create_any_object
                                   export_objects derived_temporal last_used_operation
                                   deriving_conversion single_crs_cs grid_used network_grids
-                                  network_listing missing_input crs_to_crs_area step_error_log proj_based_operation
+                                  network_listing grid_miss_cache missing_input crs_to_crs_area step_error_log proj_based_operation
                                   proj_string_refusal invalid_operations errno_parity
                                   crs_proj_strings wkt_warnings wkt_round_trip
                                   c_api)
@@ -435,6 +436,18 @@ for test in "${tests[@]}"; do
       theirs=$(env -u LD_LIBRARY_PATH PROJ_DATA="$ref/build/data" "$out/network_listing_ref" 2>/dev/null)
       [ "$ours" = "$theirs" ] || { diff <(echo "$theirs") <(echo "$ours") >&2; exit 1; }
       echo "listing, messages and points identical to libproj, $(echo "$ours" | grep -c 'Cannot open') Cannot open lines" ;;
+    grid_miss_cache)
+      # The Cannot open lines of a series of calls on one context: PROJ tries a grid that did not
+      # open again only once its lookForGridInfo record has left the context's LRU.
+      echo "== grid_miss_cache"
+      gcc -std=c99 -I"$root/capi/include" "$here/grid_miss_cache.c" -o "$out/grid_miss_cache_ours" \
+        "${ldflags[@]}"
+      gcc -std=c99 -I"$src/src" "$here/grid_miss_cache.c" -o "$out/grid_miss_cache_ref" -L"$ref/build/lib" \
+        -lproj -Wl,-rpath,"$ref/build/lib"
+      ours=$(PROJ_DATA="$ref/build/data" "$out/grid_miss_cache_ours" 2>/dev/null)
+      theirs=$(env -u LD_LIBRARY_PATH PROJ_DATA="$ref/build/data" "$out/grid_miss_cache_ref" 2>/dev/null)
+      [ "$ours" = "$theirs" ] || { diff <(echo "$theirs") <(echo "$ours") >&2; exit 1; }
+      echo "$(echo "$ours" | grep -c 'cannot_open=') calls with the Cannot open counts of libproj" ;;
     missing_input)
       # A NULL or wrongly typed argument of the constructors: object, errno and the logged line.
       echo "== missing_input"

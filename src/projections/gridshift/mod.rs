@@ -287,6 +287,8 @@ fn deferred<S: Step + 'static>(
         make,
         network: crate::network::context(),
         loaded: std::sync::OnceLock::new(),
+        once: defer_now,
+        failed: std::sync::atomic::AtomicBool::new(false),
     })))
 }
 
@@ -312,6 +314,12 @@ struct Deferred<S> {
     /// that happens to transform.
     network: crate::network::GridContext,
     loaded: std::sync::OnceLock<S>,
+    /// The step was deferred as PROJ's `defer_grid_opening` defers it: the grids are opened at
+    /// the first transform only, and a failure is the answer of every later point without a new
+    /// attempt (`error_code_in_defer_grid_opening`, hgridshift.cpp:30-41, vgridshift.cpp,
+    /// gridshift.cpp, xyzgridshift.cpp).
+    once: bool,
+    failed: std::sync::atomic::AtomicBool,
 }
 
 impl<S: Step> Deferred<S> {
@@ -326,10 +334,17 @@ impl<S: Step> Deferred<S> {
         if let Some(step) = self.loaded.get() {
             return Ok(step);
         }
+        if self.once && self.failed.load(std::sync::atomic::Ordering::Acquire) {
+            return Err(TransformError::NetworkUnavailable);
+        }
         let step = crate::network::with_context(&self.network, || {
             with_files_kept_open(|| (self.make)(&self.params, &self.frame, &self.grids))
         })
-        .map_err(|_| TransformError::NetworkUnavailable)?;
+        .map_err(|_| {
+            self.failed
+                .store(true, std::sync::atomic::Ordering::Release);
+            TransformError::NetworkUnavailable
+        })?;
         Ok(self.loaded.get_or_init(|| step))
     }
 }

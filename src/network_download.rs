@@ -112,6 +112,9 @@ pub(crate) fn download(
     }
     let url = network::build_url(ctx, name);
     let file_name = network::cache_file_name(&url).ok_or(ProjError::Network)?;
+    // `invalidateGridInfo` of the short name, before the download (networkfilemanager.cpp:
+    // 2690-2705): the records of the file are looked up again once it is on disk.
+    ctx.grid_info().invalidate(&file_name);
     let directory = ctx.writable_directory().ok_or(ProjError::Path)?;
     network::create_directory_all(ctx, &directory).map_err(|_| ProjError::Path)?;
     let local = directory.join(&file_name);

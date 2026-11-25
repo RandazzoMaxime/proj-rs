@@ -409,7 +409,7 @@ pub extern "C" fn proj_grid_get_info_from_database(
         let (Some(name), Some(database)) = (util::text(grid_name), context.database()) else {
             return 0;
         };
-        match database.grid_info(name) {
+        match context.builder.within(|| database.grid_info(name)) {
             Ok(Some(info)) => {
                 util::put(out_full_name, context.arena.put(&info.full_name));
                 util::put(out_package_name, context.arena.put(&info.package_name));

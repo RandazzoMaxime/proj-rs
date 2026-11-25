@@ -35,6 +35,9 @@ pub(crate) struct Pj {
     pub(crate) from_text: bool,
     /// How PROJ reads the text `proj_create` was given.
     pub(crate) read_as: ReadAs,
+    /// The grids of the operation, looked up once by `proj_coordoperation_get_grid_used_count`
+    /// and kept for the object (`gridsNeededAsked`, c_api.cpp:7920-7930).
+    pub(crate) grids_needed: Option<Vec<proj_rs::iso19111::GridDescription>>,
     pub(crate) arena: Arena,
 }
 
@@ -64,6 +67,7 @@ impl Pj {
             transformed: false,
             from_text: false,
             read_as: ReadAs::Object,
+            grids_needed: None,
             arena: Arena::default(),
         }
     }
@@ -78,6 +82,7 @@ impl Pj {
             transformed: false,
             from_text: false,
             read_as: ReadAs::Object,
+            grids_needed: None,
             arena: Arena::default(),
         }
     }
@@ -109,6 +114,7 @@ impl Pj {
             transformed: false,
             from_text: false,
             read_as: self.read_as,
+            grids_needed: None,
             arena: Arena::default(),
         }
     }

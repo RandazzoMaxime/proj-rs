@@ -319,6 +319,8 @@ pub extern "C" fn proj_cleanup() {
     guard((), || {
         let ctx = context(std::ptr::null());
         ctx.database = None;
+        // `closeDb` drops the `DatabaseContext` of the default context and its grid records.
+        ctx.builder.reset_grid_records();
     });
 }
 
