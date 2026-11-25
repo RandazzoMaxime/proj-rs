@@ -6,6 +6,12 @@ rest is outside semver.
 
 ## Unreleased
 
+- `proj_coordoperation_get_grid_used` and `proj_coordoperation_is_instantiable` look for the grids
+  on the search paths of the context (`proj_context_set_search_paths`), as PROJ 9.9.0 does, not
+  only on `PROJ_DATA`: a grid in a directory added by pyproj's `append_data_dir` was reported
+  missing (`available=0`, no file), and the operation not instantiable, although
+  `proj_create_operations` listed it (pyproj's `test_transformer_group__download_grids`
+  downloaded the grids again). Compared with libproj by `capi/tests/run.sh search_path_grids`.
 - `+datum=` no longer hides `+R`, `+a`, `+b`, `+rf`, `+f`, `+e`, `+es` or an earlier `+ellps`.
   As in `pj_datum_set`, the datum's `ellps=` is appended at the end of the list, so an earlier
   `+ellps` wins and the size and shape keys override it: `+proj=merc +datum=WGS84 +R=6370000`

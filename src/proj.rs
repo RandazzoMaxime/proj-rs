@@ -1930,6 +1930,35 @@ impl ProjBuilder {
         })
     }
 
+    /// [`CoordinateOperation::grids_needed_at`], with the files looked for on the search paths
+    /// and under the network of this builder, as PROJ's `gridsNeeded` opens them through the
+    /// context: a path given by [`Self::replace_search_paths`] counts, not only `PROJ_DATA`.
+    ///
+    /// # Errors
+    ///
+    /// [`FactoryError`] when the database rejects a grid lookup.
+    pub fn grids_needed_at(
+        &self,
+        operation: &CoordinateOperation,
+        db: &DatabaseContext,
+        known: GridAvailabilityUse,
+        endpoint: &str,
+    ) -> Result<Vec<GridDescription>, FactoryError> {
+        crate::network::with_context(&self.net, || operation.grids_needed_at(db, known, endpoint))
+    }
+
+    /// [`CoordinateOperation::is_proj_instantiable`], with the grids looked for as in
+    /// [`Self::grids_needed_at`].
+    #[must_use]
+    pub fn is_proj_instantiable(
+        &self,
+        operation: &CoordinateOperation,
+        db: &DatabaseContext,
+        known: GridAvailabilityUse,
+    ) -> bool {
+        crate::network::with_context(&self.net, || operation.is_proj_instantiable(db, known))
+    }
+
     /// Version of the PROJ release this port follows.
     ///
     /// # Errors

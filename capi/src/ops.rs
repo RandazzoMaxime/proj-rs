@@ -453,7 +453,11 @@ pub extern "C" fn proj_coordoperation_is_instantiable(
         let Some(database) = context.database() else {
             return 0;
         };
-        c_int::from(operation.is_proj_instantiable(&database, known_grids(context)))
+        c_int::from(context.builder.is_proj_instantiable(
+            operation,
+            &database,
+            known_grids(context),
+        ))
     })
 }
 
@@ -811,7 +815,10 @@ pub extern "C" fn proj_coordoperation_get_grid_used(
             return 0;
         };
         let endpoint = context.builder.get_url_endpoint().unwrap_or_default();
-        let Ok(grids) = operation.grids_needed_at(&database, known_grids(context), &endpoint)
+        let Ok(grids) =
+            context
+                .builder
+                .grids_needed_at(operation, &database, known_grids(context), &endpoint)
         else {
             return 0;
         };

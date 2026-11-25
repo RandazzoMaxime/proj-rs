@@ -6,7 +6,8 @@
 #   fork datadir geodesic proj_string_type projjson_objects horizontal_datum string_lifetime
 #   unnamed_operation embedded_db pj_info_order normalize_operation latin1_input
 #   crs_to_crs_describe create_any_object export_objects derived_temporal last_used_operation
-#   deriving_conversion single_crs_cs grid_used network_grids network_listing missing_input
+#   deriving_conversion single_crs_cs grid_used search_path_grids network_grids network_listing
+#   missing_input
 #   crs_to_crs_area step_error_log
 #   proj_based_operation proj_string_refusal invalid_operations errno_parity crs_proj_strings
 #   wkt_warnings wkt_round_trip c_api
@@ -35,8 +36,8 @@ tests=("$@")
                                   unnamed_operation embedded_db pj_info_order normalize_operation
                                   latin1_input crs_to_crs_describe create_any_object
                                   export_objects derived_temporal last_used_operation
-                                  deriving_conversion single_crs_cs grid_used network_grids
-                                  network_listing missing_input crs_to_crs_area step_error_log proj_based_operation
+                                  deriving_conversion single_crs_cs grid_used search_path_grids
+                                  network_grids network_listing missing_input crs_to_crs_area step_error_log proj_based_operation
                                   proj_string_refusal invalid_operations errno_parity
                                   crs_proj_strings wkt_warnings wkt_round_trip
                                   c_api)
@@ -412,6 +413,17 @@ for test in "${tests[@]}"; do
       theirs=$(env -u LD_LIBRARY_PATH "$out/grid_used_ref" "${codes[@]}" 2>/dev/null)
       [ "$ours" = "$theirs" ] || { diff <(echo "$theirs") <(echo "$ours") >&2; exit 1; }
       echo "grids identical to libproj for ${#codes[@]} operations" ;;
+    search_path_grids)
+      # The grids of a context whose search paths are set by proj_context_set_search_paths.
+      echo "== search_path_grids"
+      gcc -std=c99 -I"$root/capi/include" "$here/search_path_grids.c" -o "$out/search_path_grids_ours" "${ldflags[@]}"
+      gcc -std=c99 -I"$src/src" "$here/search_path_grids.c" -o "$out/search_path_grids_ref" -L"$ref/build/lib" \
+        -lproj -Wl,-rpath,"$ref/build/lib"
+      pairs=(EPSG:4326 EPSG:2964 EPSG:4267 EPSG:4269)
+      ours=$(env -u PROJ_DATA -u PROJ_LIB "$out/search_path_grids_ours" "$ref/build/data" "$root/data/tests" "${pairs[@]}" 2>/dev/null)
+      theirs=$(env -u LD_LIBRARY_PATH -u PROJ_DATA -u PROJ_LIB "$out/search_path_grids_ref" "$ref/build/data" "$root/data/tests" "${pairs[@]}" 2>/dev/null)
+      [ "$ours" = "$theirs" ] || { diff <(echo "$theirs") <(echo "$ours") >&2; exit 1; }
+      echo "grids on the search paths identical to libproj for $((${#pairs[@]} / 2)) pairs, $(echo "$ours" | grep -c 'available=1') grids found" ;;
     network_grids)
       # A grid the database knows is available when the network is on, downloaded or not.
       echo "== network_grids"
