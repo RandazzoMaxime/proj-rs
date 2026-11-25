@@ -6,6 +6,20 @@ rest is outside semver.
 
 ## Unreleased
 
+- The GRASS GIS, PDAL, SpatiaLite and libgeotiff benches (`tools/clients/`) set up the
+  environment their suites expect, so that what is left says something about libproj, and prove
+  the libproj each pass loads (`tools/clients/libproj_proof.sh`: `ldd`, no `DT_RPATH`,
+  `LD_DEBUG=libs` on a real call, the `proj_count.c` interposer for the whole pass). GRASS 8.5.0:
+  FFTW, the Python of the venv for the modules, IPython and ipywidgets, an unprivileged user;
+  818 of 825 tests pass with both libraries, the 7 others are skipped by GRASS itself
+  (`@pytest.mark.skip`). PDAL 2.10.2: `split_proxy.py` for arbiter behind an HTTPS-only proxy;
+  141 of 142 with both, `pdal_io_copc_remote_reader_test` refused by the network of the bench
+  machine (HTTP 403 on `github.com/PDAL/data/raw/...`). SpatiaLite 5.1.0: built against SQLite
+  3.42.0 (`check_bufovflw` fails with SQLite 3.43 and later); 105 of 108 with both, the 3 others
+  expect the message of PROJ 9.1 to 9.4 (`crs not found`, PROJ 9.5 added `: NONE:0`) and pass,
+  7241 cases each, once given the message of PROJ 9.5. libgeotiff 1.7.4: `testlistgeo` skips the
+  corners of 2 of its 48 files itself (`-no_corners`); `listgeo -proj4` now prints the corners of
+  all 48, identical with both libraries. No difference between PROJ 9.9.0 and proj-rs.
 - `+datum=` no longer hides `+R`, `+a`, `+b`, `+rf`, `+f`, `+e`, `+es` or an earlier `+ellps`.
   As in `pj_datum_set`, the datum's `ellps=` is appended at the end of the list, so an earlier
   `+ellps` wins and the size and shape keys override it: `+proj=merc +datum=WGS84 +R=6370000`
