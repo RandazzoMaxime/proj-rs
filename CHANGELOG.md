@@ -6,6 +6,10 @@ rest is outside semver.
 
 ## Unreleased
 
+- PDAL bench: when github.com refuses the remote COPC file, `pdal_io_copc_remote_reader_test`
+  reads PDAL's copy on S3, once its sha256 matches the Git LFS object id of the GitHub file.
+  PDAL 2.10.2 now passes 142 of 142 tests with PROJ 9.9.0 and with proj-rs.
+
 - The GRASS GIS, PDAL, SpatiaLite and libgeotiff benches (`tools/clients/`) set up the
   environment their suites expect, so that what is left says something about libproj, and prove
   the libproj each pass loads (`tools/clients/libproj_proof.sh`: `ldd`, no `DT_RPATH`,
