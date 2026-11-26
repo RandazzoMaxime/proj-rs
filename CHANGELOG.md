@@ -6,6 +6,8 @@ rest is outside semver.
 
 ## Unreleased
 
+## 1.2.6
+
 - PDAL bench: when github.com refuses the remote COPC file, `pdal_io_copc_remote_reader_test`
   reads PDAL's copy on S3, once its sha256 matches the Git LFS object id of the GitHub file.
   PDAL 2.10.2 now passes 142 of 142 tests with PROJ 9.9.0 and with proj-rs.

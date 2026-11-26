@@ -382,7 +382,7 @@ dependencies = [
 
 [[package]]
 name = "proj-rs"
-version = "1.2.5"
+version = "1.2.6"
 dependencies = [
  "cc",
  "geo-types",
@@ -397,14 +397,14 @@ dependencies = [
 
 [[package]]
 name = "proj-rs-capi"
-version = "1.2.5"
+version = "1.2.6"
 dependencies = [
  "proj-rs",
 ]
 
 [[package]]
 name = "proj-rs-georust"
-version = "1.2.5"
+version = "1.2.6"
 dependencies = [
  "approx",
  "geo-types",

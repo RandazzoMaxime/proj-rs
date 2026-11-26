@@ -5,7 +5,7 @@ resolver = "2"
 
 [package]
 name = "proj-rs"
-version = "1.2.5"
+version = "1.2.6"
 edition = "2021"
 rust-version = "1.83"
 license = "MIT"
