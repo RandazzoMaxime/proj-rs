@@ -161,8 +161,8 @@ err The conversion failed with the following error: point is outside the project
 err The conversion failed with the following error: Invalid coordinate
 ok 415cdd8bd2980e17 c1511bbfe63e6f00
 == EPSG:28992 to EPSG:4326
-ok 40158c7f13962266 404a13dcaf9b6ed0
-ok c065d658c005da5a c04a362b2f17de30
-ok 40159b767501abb3 404a15032bfbd8e7
-ok 40618a26a8bf7594 c04a36081c857877
-ok 4015aa6f619b8fdd 404a1629990c2381
+ok 40158c7f13962267 404a13dcaf9b6ece
+ok c065d658c005da5a c04a362b2f17de2f
+ok 40159b767501abb4 404a15032bfbd8e8
+ok 40618a26a8bf7594 c04a36081c857876
+ok 4015aa6f619b8fdd 404a1629990c2383
