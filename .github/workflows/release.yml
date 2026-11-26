@@ -48,7 +48,7 @@ jobs:
     outputs:
       version: ${{ steps.check.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - id: check
         env:
           DISPATCH_TAG: ${{ github.event.inputs.tag }}
@@ -117,13 +117,13 @@ jobs:
           - platform: windows-x86_64
             os: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@master
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master
         with:
           toolchain: ${{ env.RUST_VERSION }}
           targets: ${{ matrix.rust_target }}
       - if: runner.os == 'Windows'
-        uses: ilammy/msvc-dev-cmd@v1
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
       # musl-gcc compiles the bundled SQLite for the musl target.
       - if: matrix.rust_target == 'x86_64-unknown-linux-musl'
         run: |
@@ -150,7 +150,7 @@ jobs:
         shell: pwsh
         run: tools\release-smoke.ps1 -Cli (Get-Item dist\*-cli.zip).FullName -Libproj (Get-Item dist\*-libproj.zip).FullName
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: archives-${{ matrix.platform }}
           path: dist/*
@@ -161,7 +161,7 @@ jobs:
     needs: [prepare, build]
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: archives-*
           merge-multiple: true
@@ -192,7 +192,7 @@ jobs:
           sha256sum $found > SHA256SUMS
           sha256sum --check SHA256SUMS
           ls -l
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: SHA256SUMS
           path: dist/SHA256SUMS
@@ -208,17 +208,23 @@ jobs:
     runs-on: ubuntu-22.04
     permissions:
       contents: write
+      id-token: write
+      attestations: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: archives-*
           merge-multiple: true
           path: dist
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: SHA256SUMS
           path: dist
+      # Signed provenance of every archive: `gh attestation verify <file> --repo helix-aero/proj-rs`.
+      - uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
+        with:
+          subject-path: dist/*
       - name: Check the checksums once more, then publish
         env:
           GH_TOKEN: ${{ github.token }}
@@ -237,3 +243,23 @@ jobs:
             --title "proj-rs v$VERSION" \
             --notes-file "docs/release-notes/v$VERSION.md" \
             "${prerelease[@]}"
+
+  # Trusted Publishing: crates.io exchanges the OIDC token of this run for a token valid 30 minutes,
+  # no secret stored. Configured once on crates.io (crate settings, repository helix-aero/proj-rs,
+  # workflow release.yml). Publishes `proj-rs` only.
+  crates-io:
+    needs: [prepare, release]
+    runs-on: ubuntu-22.04
+    environment: release
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+      - id: auth
+        uses: rust-lang/crates-io-auth-action@3268eb413133e2960fa4ae0e963ca76380c54cd9 # v1
+      - run: cargo publish -p proj-rs
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
