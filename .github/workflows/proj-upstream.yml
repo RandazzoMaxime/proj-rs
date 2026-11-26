@@ -46,7 +46,7 @@ jobs:
       run: ${{ steps.find.outputs.run }}
       publish: ${{ steps.find.outputs.publish }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - id: find
         env:
           GH_TOKEN: ${{ github.token }}
@@ -104,7 +104,7 @@ jobs:
       CURRENT: ${{ needs.detect.outputs.current }}
       PUBLISH: ${{ needs.detect.outputs.publish }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # The reference goes outside the repository: the differential tests skip the PATH entries
       # under it, where cargo puts proj-rs's own cs2cs, so a reference in target/ is not seen.
       - run: echo "REF=$RUNNER_TEMP/proj-reference-upstream" >> "$GITHUB_ENV"
