@@ -18,8 +18,10 @@ jobs:
         target: [proj_string, user_input, transform, grid_reader, model_files]
       fail-fast: false
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@nightly
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master
+        with:
+          toolchain: nightly
       - run: cargo install cargo-fuzz --locked
       - run: python3 fuzz/seed.py
       - run: cargo fuzz build ${{ matrix.target }}
@@ -27,7 +29,7 @@ jobs:
       - run: ./run.sh "${{ github.event.inputs.seconds || '240' }}" ${{ matrix.target }}
         working-directory: fuzz
       - if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: fuzz-${{ matrix.target }}
           path: |

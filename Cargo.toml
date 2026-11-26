@@ -22,6 +22,8 @@ exclude = [
     "/bench",
     "/tools",
     "/tests/parity",
+    "/data/proj.db",
+    "/data/tests",
 ]
 
 [[bin]]

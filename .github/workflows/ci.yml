@@ -15,15 +15,16 @@ jobs:
       fail-fast: false
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master
         with:
+          toolchain: stable
           components: clippy, rustfmt
       # The reference is PROJ 9.9.0 itself, the version every port is checked
       # against. Ubuntu's apt ships 9.4, so the binaries come from conda-forge,
       # on macOS too.
       - if: runner.os != 'Windows'
-        uses: mamba-org/setup-micromamba@v2
+        uses: mamba-org/setup-micromamba@add3a49764cedee8ee24e82dfde87f5bc2914462 # v2
         with:
           environment-name: proj-ref
           create-args: proj=9.9.0 --channel conda-forge
@@ -63,7 +64,7 @@ jobs:
       # PROJ runs the gie files that fetch grids only with PROJ_NETWORK=ON
       # (test/CMakeLists.txt). The same files run here. Fetched grids are
       # cached in the user writable directory, which the engine searches first.
-      - uses: actions/cache@v4
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ${{ runner.temp }}/proj
           key: proj-grids-${{ runner.os }}-9.9.0-v1
@@ -80,10 +81,12 @@ jobs:
   capi:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master
+        with:
+          toolchain: stable
       - run: sudo apt-get update && sudo apt-get install -y cmake libsqlite3-dev libgtest-dev
-      - uses: actions/cache@v4
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: target/proj-reference
           key: proj-reference-9.9.0-${{ hashFiles('tools/build-reference.sh') }}
@@ -98,9 +101,11 @@ jobs:
   capi-windows:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: ilammy/msvc-dev-cmd@v1
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master
+        with:
+          toolchain: stable
+      - uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
       - run: capi\tests\dist.ps1 -Release
       - name: include_proj_h_from_c against proj.lib
         run: |
@@ -115,8 +120,10 @@ jobs:
   doc:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master
+        with:
+          toolchain: stable
       - run: cargo doc --workspace --no-deps
         env:
           RUSTDOCFLAGS: -D warnings
@@ -136,7 +143,7 @@ jobs:
   msrv:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - id: declared
         run: |
           version=$(grep -m1 '^rust-version' Cargo.toml | cut -d'"' -f2)
@@ -149,7 +156,7 @@ jobs:
           done
           case "$version" in *.*.*) ;; *) version="$version.0" ;; esac
           echo "version=$version" >> "$GITHUB_OUTPUT"
-      - uses: dtolnay/rust-toolchain@master
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master
         with:
           toolchain: ${{ steps.declared.outputs.version }}
       # Every feature but `avx512`: the AVX-512 batch path uses the `std::arch` AVX-512 types,
@@ -167,8 +174,17 @@ jobs:
     if: false
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: obi1kenobi/cargo-semver-checks-action@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master
+        with:
+          toolchain: stable
+      - uses: obi1kenobi/cargo-semver-checks-action@6b69fcf40e9b5fb17adeb57e4b6ecd020649a239 # v2
         with:
           package: proj-rs, proj-rs-georust
+
+  # Advisories (RustSec), licenses, registries and bans of the dependency tree: `deny.toml`.
+  deny:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: EmbarkStudios/cargo-deny-action@81891abc19297b21343b15ef67dc61e4aea74fda # v2
