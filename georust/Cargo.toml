@@ -1,6 +1,6 @@
 [package]
 name = "proj-rs-georust"
-version = "1.2.5"
+version = "1.2.6"
 edition = "2021"
 rust-version = "1.83"
 license = "MIT"
@@ -28,7 +28,7 @@ bundled_proj = []
 pkg_config = []
 
 [dependencies]
-proj-rs = { path = "..", version = "1.2.5" }
+proj-rs = { path = "..", version = "1.2.6" }
 
 [dev-dependencies]
 approx = "0.5"
