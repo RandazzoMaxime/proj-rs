@@ -8,12 +8,14 @@
 )]
 
 use crate::engine::{classic_step_batch, CreateError, Frame, Kernel, Params, TransformError};
+use crate::projmath::{auxlat_coeffs, auxlat_convert, AuxLat};
 use std::f64::consts::{FRAC_PI_2, FRAC_PI_4};
 
 // The vector path of `sterea`, four points at a time.
 #[path = "sterea_batch.rs"]
 mod sterea_batch;
 
+#[cfg(simd_lanes)]
 const DEL_TOL: f64 = 1e-14;
 
 #[derive(Clone, Copy)]
@@ -22,13 +24,15 @@ struct Gauss {
     k: f64,
     e: f64,
     ratexp: f64,
+    inv_c: f64,
+    cgb: [f64; 6],
 }
 
 fn srat(esinp: f64, ratexp: f64) -> f64 {
     ((1.0 - esinp) / (1.0 + esinp)).powf(ratexp)
 }
 
-fn gauss_ini(e: f64, phi0: f64) -> Result<(Gauss, f64, f64), CreateError> {
+fn gauss_ini(e: f64, n: f64, phi0: f64) -> Result<(Gauss, f64, f64), CreateError> {
     let es = e * e;
     let sphi = phi0.sin();
     let cphi = phi0.cos();
@@ -50,7 +54,21 @@ fn gauss_ini(e: f64, phi0: f64) -> Result<(Gauss, f64, f64), CreateError> {
     } else {
         (0.5 * chi + FRAC_PI_4).tan() / ((0.5 * phi0 + FRAC_PI_4).tan().powf(c) * srat_val)
     };
-    Ok((Gauss { c, k, e, ratexp }, chi, rc))
+    let cgb = auxlat_coeffs(n, AuxLat::Conformal, AuxLat::Geographic)
+        .expect("conformal to geographic is generated");
+    let inv_c = 1.0 / c;
+    Ok((
+        Gauss {
+            c,
+            k,
+            e,
+            ratexp,
+            inv_c,
+            cgb,
+        },
+        chi,
+        rc,
+    ))
 }
 
 impl Gauss {
@@ -64,23 +82,16 @@ impl Gauss {
         (self.c * lam, phi)
     }
 
-    fn inverse(self, lam: f64, mut phi: f64) -> Result<(f64, f64), TransformError> {
-        let lam = lam / self.c;
-        let num = ((0.5 * phi + FRAC_PI_4).tan() / self.k).powf(1.0 / self.c);
-        let mut converged = false;
-        for _ in 0..20 {
-            let next = 2.0 * (num * srat(self.e * phi.sin(), -0.5 * self.e)).atan() - FRAC_PI_2;
-            if (next - phi).abs() < DEL_TOL {
-                phi = next;
-                converged = true;
-                break;
-            }
-            phi = next;
-        }
-        if !converged {
+    /// The Gauss sphere is the conformal latitude raised to `c`, so the geodetic latitude
+    /// comes from the conformal series, not from PROJ's fixed-point loop.
+    fn inverse(self, lam: f64, phi: f64) -> Result<(f64, f64), TransformError> {
+        let tan_conformal = ((0.5 * phi + FRAC_PI_4).tan() / self.k).powf(self.inv_c);
+        let conformal = 2.0 * tan_conformal.atan() - FRAC_PI_2;
+        let phi = auxlat_convert(conformal, &self.cgb);
+        if !phi.is_finite() {
             return Err(TransformError::OutsideDomain);
         }
-        Ok((lam, phi))
+        Ok((lam / self.c, phi))
     }
 }
 
@@ -144,7 +155,7 @@ pub(crate) fn build(
     if name != "sterea" {
         return Ok(None);
     }
-    let (gauss, chi, radius) = gauss_ini(frame.earth.e(), frame.phi0)?;
+    let (gauss, chi, radius) = gauss_ini(frame.earth.e(), frame.earth.n(), frame.phi0)?;
     let kernel = Sterea {
         gauss,
         sinc0: chi.sin(),

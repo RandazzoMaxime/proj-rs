@@ -10,6 +10,7 @@
 
 use crate::angle::adjlon;
 use crate::engine::{classic_step, CreateError, Frame, Kernel, Params, TransformError};
+use crate::projmath::{auxlat_coeffs, auxlat_convert, AuxLat};
 use std::f64::consts::{FRAC_PI_2, FRAC_PI_4};
 
 const BESSEL_A: f64 = 6_377_397.155;
@@ -18,7 +19,6 @@ const UQ: f64 = 1.042_168_563_804_74;
 const S0: f64 = 1.370_083_462_815_55;
 const DEFAULT_PHI0: f64 = 0.863_937_979_737_193;
 const DEFAULT_LAM0: f64 = 0.741_764_932_097_590_1 - 0.308_341_501_185_665;
-const EPS: f64 = 1e-15;
 
 const X0: f64 = 1_089_000.0;
 const Y0: f64 = 654_000.0;
@@ -61,7 +61,6 @@ struct Krovak {
     k: f64,
     n: f64,
     rho0: f64,
-    ad: f64,
     easting_northing: bool,
     modified: bool,
     e: f64,
@@ -71,6 +70,18 @@ struct Krovak {
     over: bool,
     /// `a_bessel / a` of the caller's frame.
     scale: f64,
+    sin_ad: f64,
+    cos_ad: f64,
+    sin_s0: f64,
+    tan_s0: f64,
+    /// `rho0 * tan(S0/2 + pi/4)^n`, the numerator of `rho`.
+    rho_num: f64,
+    inv_alpha: f64,
+    inv_n: f64,
+    /// `k^(-1/alpha)`.
+    k_pow: f64,
+    /// Conformal to geodetic latitude series on Bessel.
+    cgb: [f64; 6],
 }
 
 impl Krovak {
@@ -92,14 +103,13 @@ impl Kernel for Krovak {
         let u = 2.0
             * ((self.k * (phi / 2.0 + FRAC_PI_4).tan().powf(self.alpha) / gfi).atan() - FRAC_PI_4);
         let deltav = -lam * self.alpha;
-        let s = (self.ad.cos() * u.sin() + self.ad.sin() * u.cos() * deltav.cos()).asin();
+        let s = (self.cos_ad * u.sin() + self.sin_ad * u.cos() * deltav.cos()).asin();
         if s.cos() < 1e-12 {
             return Ok((0.0, 0.0));
         }
         let d = (u.cos() * deltav.sin() / s.cos()).asin();
         let eps = self.n * d;
-        let rho = self.rho0 * (S0 / 2.0 + FRAC_PI_4).tan().powf(self.n)
-            / (s / 2.0 + FRAC_PI_4).tan().powf(self.n);
+        let rho = self.rho_num / (s / 2.0 + FRAC_PI_4).tan().powf(self.n);
         let mut x = rho * eps.cos();
         let mut y = rho * eps.sin();
         if self.modified {
@@ -135,35 +145,19 @@ impl Kernel for Krovak {
         }
         let rho = x.hypot(y);
         let eps = y.atan2(x);
-        let d = eps / S0.sin();
+        let d = eps / self.sin_s0;
         let s = if rho == 0.0 {
             FRAC_PI_2
         } else {
-            2.0 * (((self.rho0 / rho).powf(1.0 / self.n) * (S0 / 2.0 + FRAC_PI_4).tan()).atan()
-                - FRAC_PI_4)
+            2.0 * (((self.rho0 / rho).powf(self.inv_n) * self.tan_s0).atan() - FRAC_PI_4)
         };
-        let u = (self.ad.cos() * s.sin() - self.ad.sin() * s.cos() * d.cos()).asin();
+        let u = (self.cos_ad * s.sin() - self.sin_ad * s.cos() * d.cos()).asin();
         let deltav = (s.cos() * d.sin() / u.cos()).asin();
         let lam = -deltav / self.alpha;
-        let num_base =
-            self.k.powf(-1.0 / self.alpha) * (u / 2.0 + FRAC_PI_4).tan().powf(1.0 / self.alpha);
-        let mut fi1 = u;
-        let mut phi = u;
-        let mut converged = false;
-        for _ in 0..100 {
-            phi = 2.0
-                * ((num_base
-                    * ((1.0 + self.e * fi1.sin()) / (1.0 - self.e * fi1.sin()))
-                        .powf(self.e / 2.0))
-                .atan()
-                    - FRAC_PI_4);
-            if (fi1 - phi).abs() < EPS {
-                converged = true;
-                break;
-            }
-            fi1 = phi;
-        }
-        if !converged {
+        let tan_chi = self.k_pow * (u / 2.0 + FRAC_PI_4).tan().powf(self.inv_alpha);
+        let chi = 2.0 * tan_chi.atan() - FRAC_PI_2;
+        let phi = auxlat_convert(chi, &self.cgb);
+        if !phi.is_finite() {
             return Err(TransformError::OutsideDomain);
         }
         Ok((lam + self.shift, phi))
@@ -218,14 +212,21 @@ pub(crate) fn build(
     }
     let k = (u0 / 2.0 + FRAC_PI_4).tan() / tan_half.powf(alpha) * g;
     let n0 = (1.0 - BESSEL_ES).sqrt() / (1.0 - BESSEL_ES * phi0.sin().powi(2));
+    let sqrt_one_minus_es = (1.0 - BESSEL_ES).sqrt();
+    let third = (1.0 - sqrt_one_minus_es) / (1.0 + sqrt_one_minus_es);
+    let cgb = auxlat_coeffs(third, AuxLat::Conformal, AuxLat::Geographic)
+        .expect("conformal to geographic is generated");
+    let ad = FRAC_PI_2 - UQ;
+    let n = S0.sin();
+    let tan_s0 = (S0 / 2.0 + FRAC_PI_4).tan();
+    let rho0 = k0 * n0 / S0.tan();
     Ok(Some(classic_step(
         frame,
         Krovak {
             alpha,
             k,
-            n: S0.sin(),
-            rho0: k0 * n0 / S0.tan(),
-            ad: FRAC_PI_2 - UQ,
+            n,
+            rho0,
             easting_northing: !params.flag("czech"),
             modified,
             e,
@@ -234,6 +235,15 @@ pub(crate) fn build(
             shift: lam0 - frame.lam0,
             over: frame.over,
             scale: BESSEL_A / frame.earth.a(),
+            sin_ad: ad.sin(),
+            cos_ad: ad.cos(),
+            sin_s0: n,
+            tan_s0,
+            rho_num: rho0 * tan_s0.powf(n),
+            inv_alpha: 1.0 / alpha,
+            inv_n: 1.0 / n,
+            k_pow: k.powf(-1.0 / alpha),
+            cgb,
         },
     )))
 }
