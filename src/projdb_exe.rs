@@ -20,9 +20,14 @@ use std::os::unix::fs::{FileExt, MetadataExt};
 use std::ptr;
 use std::sync::OnceLock;
 
-use miniz_oxide::inflate::decompress_slice_iter_to_slice;
+use miniz_oxide::inflate::core::inflate_flags::{
+    TINFL_FLAG_PARSE_ZLIB_HEADER, TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF,
+};
+use miniz_oxide::inflate::core::{decompress, DecompressorOxide};
+use miniz_oxide::inflate::TINFLStatus;
 use rusqlite::ffi;
 use rusqlite::{Connection, OpenFlags};
+use std::cell::RefCell;
 
 const VFS_NAME: &CStr = c"proj-rs-exe";
 const FILE_NAME: &CStr = c"proj-rs-embedded";
@@ -31,6 +36,20 @@ const HEADER: usize = 20;
 
 /// The largest zlib stream of a page: a 4 KiB page does not compress to more than this.
 const MAX_STREAM: usize = 8192;
+
+/// What one thread keeps to inflate pages: the decompressor state and the buffer a stream is
+/// read into.
+struct Inflate {
+    state: Box<DecompressorOxide>,
+    stream: Vec<u8>,
+}
+
+thread_local! {
+    static INFLATE: RefCell<Inflate> = RefCell::new(Inflate {
+        state: Box::default(),
+        stream: vec![0; MAX_STREAM],
+    });
+}
 
 /// The compressed pages of the embedded database, parsed from the header of `proj.pages`. The
 /// streams come from the executable file when `file` is set, else from `bytes`.
@@ -67,13 +86,21 @@ impl Pages {
     }
 
     /// Decompress page `index` into `out`, which holds exactly the bytes of that page.
+    ///
+    /// The decompressor and the stream buffer are kept per thread: building them zeroes about
+    /// 20 KiB, more than inflating a 4 KiB page costs.
     fn decode(&self, index: usize, out: &mut [u8]) -> bool {
-        let mut scratch = [0u8; MAX_STREAM];
-        let Some(stream) = self.stream(index, &mut scratch) else {
-            return false;
-        };
-        decompress_slice_iter_to_slice(out, std::iter::once(stream), true, false)
-            .is_ok_and(|written| written == out.len())
+        INFLATE.with(|cell| {
+            let mut inflate = cell.borrow_mut();
+            let Inflate { state, stream } = &mut *inflate;
+            let Some(stream) = self.stream(index, stream) else {
+                return false;
+            };
+            state.init();
+            let flags = TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF | TINFL_FLAG_PARSE_ZLIB_HEADER;
+            let (status, _, written) = decompress(state, stream, out, 0, flags);
+            status == TINFLStatus::Done && written == out.len()
+        })
     }
 
     /// The zlib stream of page `index`: read from the executable file when there is one.
@@ -414,19 +441,25 @@ unsafe extern "C" fn io_read(
     let available = source.len.saturating_sub(offset);
     let count = amount.min(available);
     let (head, tail) = buffer.split_at_mut(count);
-    let mut scratch = [0u8; 4096];
     let mut done = 0;
     while done < count {
         let at = offset + done;
         let index = at / source.page;
         let inside = at % source.page;
         let page_len = source.page_len(index);
-        let page = &mut scratch[..page_len];
-        if !source.decode(index, page) {
-            return ffi::SQLITE_IOERR_READ;
-        }
         let take = (page_len - inside).min(count - done);
-        head[done..done + take].copy_from_slice(&page[inside..inside + take]);
+        if inside == 0 && take == page_len {
+            if !source.decode(index, &mut head[done..done + take]) {
+                return ffi::SQLITE_IOERR_READ;
+            }
+        } else {
+            let mut scratch = [0u8; 4096];
+            let page = &mut scratch[..page_len];
+            if !source.decode(index, page) {
+                return ffi::SQLITE_IOERR_READ;
+            }
+            head[done..done + take].copy_from_slice(&page[inside..inside + take]);
+        }
         done += take;
     }
     if tail.is_empty() {
@@ -505,6 +538,19 @@ mod tests {
     #[test]
     fn every_page_decodes_to_the_bytes_of_the_database() {
         assert_eq!(decode_all(PAGES).expect("decode"), WHOLE);
+    }
+
+    #[test]
+    fn pages_decode_alike_in_any_order_on_a_reused_decompressor() {
+        let pages = Pages::parse(PAGES).expect("parse");
+        let count = WHOLE.len().div_ceil(pages.page);
+        let order: Vec<usize> = (0..count).rev().chain((0..count).step_by(7)).collect();
+        for index in order {
+            let mut out = vec![0u8; pages.page_len(index)];
+            assert!(pages.decode(index, &mut out), "page {index}");
+            let start = index * pages.page;
+            assert_eq!(out, WHOLE[start..start + out.len()], "page {index}");
+        }
     }
 
     #[test]
