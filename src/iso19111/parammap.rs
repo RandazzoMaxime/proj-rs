@@ -3,6 +3,8 @@
 //! Generated from the PROJ 9.9.0 sources. The order is the lookup order.
 
 use super::model::UnitKind;
+use std::collections::HashMap;
+use std::sync::OnceLock;
 
 /// One parameter of a method.
 #[derive(Clone, Copy, Debug)]
@@ -6754,14 +6756,28 @@ pub(crate) fn method_by_code(code: i32) -> Option<&'static MethodMap> {
         .find(|method| method.epsg_code == code)
 }
 
+/// Methods by canonical name, the first of the catalogue winning a duplicate: the lookups below
+/// scan the catalogue once, not once per call (a transformation search asks for hundreds).
+fn index_by(
+    name_of: impl Fn(&MethodMap) -> Option<&'static str>,
+) -> HashMap<String, &'static MethodMap> {
+    let mut index = HashMap::new();
+    for method in PROJECTION_METHODS.iter().chain(OTHER_METHODS) {
+        if let Some(name) = name_of(method) {
+            index.entry(canonical_name(name)).or_insert(method);
+        }
+    }
+    index
+}
+
 /// First method whose WKT2 name matches `name`, ignoring case and separators.
 #[must_use]
 pub(crate) fn method_by_name(name: &str) -> Option<&'static MethodMap> {
-    let wanted = canonical_name(name);
-    PROJECTION_METHODS
-        .iter()
-        .chain(OTHER_METHODS)
-        .find(|method| canonical_name(method.wkt2_name) == wanted)
+    static INDEX: OnceLock<HashMap<String, &'static MethodMap>> = OnceLock::new();
+    INDEX
+        .get_or_init(|| index_by(|method| Some(method.wkt2_name)))
+        .get(&canonical_name(name))
+        .copied()
 }
 
 /// First method whose WKT1 (GDAL) projection name matches `name`.
@@ -6769,15 +6785,11 @@ pub(crate) fn method_by_name(name: &str) -> Option<&'static MethodMap> {
 /// Spaces and underscores are ignored, as `getMappingFromWKT1` does.
 #[must_use]
 pub(crate) fn method_by_wkt1_name(name: &str) -> Option<&'static MethodMap> {
-    let wanted = canonical_name(name);
-    PROJECTION_METHODS
-        .iter()
-        .chain(OTHER_METHODS)
-        .find(|method| {
-            method
-                .wkt1_name
-                .is_some_and(|wkt1| canonical_name(wkt1) == wanted)
-        })
+    static INDEX: OnceLock<HashMap<String, &'static MethodMap>> = OnceLock::new();
+    INDEX
+        .get_or_init(|| index_by(|method| method.wkt1_name))
+        .get(&canonical_name(name))
+        .copied()
 }
 
 fn canonical_name(name: &str) -> String {
@@ -6785,4 +6797,47 @@ fn canonical_name(name: &str) -> String {
         .filter(|ch| !matches!(ch, ' ' | '_' | '-' | '/' | '{' | '}'))
         .flat_map(|ch| ch.to_lowercase())
         .collect()
+}
+
+#[cfg(test)]
+mod method_index_tests {
+    use super::*;
+
+    fn scan(name: &str, wkt1: bool) -> Option<&'static MethodMap> {
+        let wanted = canonical_name(name);
+        PROJECTION_METHODS
+            .iter()
+            .chain(OTHER_METHODS)
+            .find(|method| {
+                let known = if wkt1 {
+                    method.wkt1_name
+                } else {
+                    Some(method.wkt2_name)
+                };
+                known.is_some_and(|known| canonical_name(known) == wanted)
+            })
+    }
+
+    #[test]
+    fn the_index_gives_the_first_method_of_the_catalogue_scan() {
+        let mut names: Vec<String> = Vec::new();
+        for method in PROJECTION_METHODS.iter().chain(OTHER_METHODS) {
+            names.push(method.wkt2_name.to_owned());
+            names.push(method.wkt2_name.to_uppercase().replace(' ', "_"));
+            names.extend(method.wkt1_name.map(str::to_owned));
+        }
+        names.push("not a method".to_owned());
+        for name in &names {
+            assert_eq!(
+                method_by_name(name).map(std::ptr::from_ref),
+                scan(name, false).map(std::ptr::from_ref),
+                "{name}"
+            );
+            assert_eq!(
+                method_by_wkt1_name(name).map(std::ptr::from_ref),
+                scan(name, true).map(std::ptr::from_ref),
+                "{name}"
+            );
+        }
+    }
 }

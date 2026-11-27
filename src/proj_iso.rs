@@ -120,6 +120,7 @@ pub(crate) fn iso_pipeline_at(
     over: ForceOver,
     request: &FacadeRequest,
 ) -> Option<IsoPipeline> {
+    let _session = crate::projdb::session();
     // A CRS to itself is PROJ's null geographic offset (`+proj=noop`), not a list of candidates.
     if from.trim() == to.trim() && request.filter.accuracy.is_none() {
         if let Some(pipeline) = null_offset_pipeline(from, to, epoch) {

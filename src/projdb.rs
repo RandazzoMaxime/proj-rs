@@ -255,8 +255,10 @@ pub(crate) fn with_db<T>(
     body: impl FnOnce(&Connection) -> Result<T, rusqlite::Error>,
 ) -> Result<T, DbFail> {
     if HELD.with(Cell::get) {
-        let connection = open_lazy_or_copy()?;
-        return body(&connection).map_err(DbFail::Sql);
+        let connection = take_spare()?;
+        let result = body(&connection).map_err(DbFail::Sql);
+        give_back(connection);
+        return result;
     }
     let shared = shared_read_only()?;
     let guard = match &shared {
@@ -272,6 +274,80 @@ pub(crate) fn with_db<T>(
 
 thread_local! {
     static HELD: Cell<bool> = const { Cell::new(false) };
+    static SESSION: RefCell<Session> = const { RefCell::new(Session::new()) };
+}
+
+/// What one creation keeps between its reads: the shared connection, so it is not rebuilt for
+/// each top-level read, and the connections of the nested reads, which a read hands back to
+/// be reused instead of opening a fresh image each time (148 per `EPSG:4267 -> EPSG:4326`).
+struct Session {
+    depth: usize,
+    primary: Option<Arc<Mutex<Connection>>>,
+    spares: Vec<Connection>,
+}
+
+impl Session {
+    const fn new() -> Self {
+        Self {
+            depth: 0,
+            primary: None,
+            spares: Vec::new(),
+        }
+    }
+}
+
+/// Keeps the shared connection and the nested-read pool alive until the outermost guard drops,
+/// then frees both: the memory is back to what it was before the session.
+pub(crate) struct SessionGuard;
+
+/// Start a session on this thread. Nested sessions share the outermost one.
+pub(crate) fn session() -> SessionGuard {
+    let first = SESSION.with(|session| {
+        let mut session = session.borrow_mut();
+        session.depth += 1;
+        session.depth == 1
+    });
+    if first {
+        if let Ok(Some(shared)) = shared_read_only() {
+            SESSION.with(|session| session.borrow_mut().primary = Some(shared));
+        }
+    }
+    SessionGuard
+}
+
+impl Drop for SessionGuard {
+    fn drop(&mut self) {
+        let released = SESSION.with(|session| {
+            let mut session = session.borrow_mut();
+            session.depth -= 1;
+            (session.depth == 0)
+                .then(|| (session.primary.take(), std::mem::take(&mut session.spares)))
+        });
+        drop(released);
+    }
+}
+
+/// A connection for a read nested in another: a spare of the session, else a new one.
+fn take_spare() -> Result<Connection, DbFail> {
+    if std::env::var_os("PROJ_AUX_DB").is_none() {
+        if let Some(spare) = SESSION.with(|session| session.borrow_mut().spares.pop()) {
+            return Ok(spare);
+        }
+    }
+    open_lazy_or_copy()
+}
+
+/// Hand a nested read's connection back to the session, or drop it outside one.
+fn give_back(connection: Connection) {
+    if std::env::var_os("PROJ_AUX_DB").is_some() {
+        return;
+    }
+    SESSION.with(|session| {
+        let mut session = session.borrow_mut();
+        if session.depth > 0 {
+            session.spares.push(connection);
+        }
+    });
 }
 
 /// Marks the shared connection as taken by this thread, until dropped.
