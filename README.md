@@ -16,7 +16,7 @@
 <p align="center">
   <a href="https://github.com/OSGeo/PROJ"><img alt="PROJ 9.9.0" src="https://img.shields.io/badge/PROJ-9.9.0-2b7bb9"></a>
   <a href="https://www.rust-lang.org"><img alt="Rust 1.83+" src="https://img.shields.io/badge/rust-1.83%2B-orange"></a>
-  <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-green"></a>
+  <a href="LICENSE"><img alt="License: AGPL-3.0" src="https://img.shields.io/badge/license-AGPL--3.0-blue"></a>
   <img alt="Version 1.2.6" src="https://img.shields.io/badge/version-1.2.6-green">
 </p>
 
@@ -697,7 +697,9 @@ are in [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License and credits
 
-PROJ-RS is released under the [MIT license](LICENSE). It stands on the work of
+PROJ-RS is released under the [GNU Affero General Public License v3.0](LICENSE). A commercial
+license is available on request: [COMMERCIAL-LICENSE.md](COMMERCIAL-LICENSE.md). Versions up to 1.2.6
+were released under the MIT license. It stands on the work of
 the PROJ authors, Charles Karney (geodesics), and Knud Poder and Karsten
 Engsager (exact Transverse Mercator). Third-party notices are in
 [NOTICE.md](NOTICE.md).

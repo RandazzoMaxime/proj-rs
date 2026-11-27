@@ -87,7 +87,7 @@ is missing is an error.
 Licence
 -------
 
-proj-rs is under the MIT licence (LICENSE). NOTICE.md lists the other works it contains and
+proj-rs is under the GNU AGPL v3.0 (LICENSE; a commercial license is on request: https://github.com/helix-aero/proj-rs/blob/main/COMMERCIAL-LICENSE.md). NOTICE.md lists the other works it contains and
 their terms, among them the EPSG Geodetic Parameter Dataset, whose Terms of Use apply to
 whoever passes this software on (https://epsg.org/terms-of-use.html), and the ESRI, IGNF and
 NKG registries (copies of the licences in data/licenses/).

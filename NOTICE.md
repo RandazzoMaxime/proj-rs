@@ -1,7 +1,9 @@
 # Third-party notices
 
-PROJ-RS is released under the MIT license in [LICENSE](LICENSE). It ports, and
-in places ships, work by other people. This file lists it.
+PROJ-RS is released under the GNU Affero General Public License v3.0 in [LICENSE](LICENSE), and
+under a commercial license on request ([COMMERCIAL-LICENSE.md](https://github.com/helix-aero/proj-rs/blob/main/COMMERCIAL-LICENSE.md)); versions up
+to 1.2.6 were released under the MIT license. It ports, and in places ships, work by other people.
+This file lists it.
 
 ## PROJ
 

@@ -6,6 +6,10 @@ rest is outside semver.
 
 ## Unreleased
 
+- License: the crates are released under AGPL-3.0-only, with a commercial license on request
+  ([COMMERCIAL-LICENSE.md](COMMERCIAL-LICENSE.md)). Versions up to 1.2.6 stay under the MIT
+  license they were published with.
+
 ## 1.2.6
 
 - PDAL bench: when github.com refuses the remote COPC file, `pdal_io_copc_remote_reader_test`

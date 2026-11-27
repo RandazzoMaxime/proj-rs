@@ -11,6 +11,13 @@ ignore = [
 
 [licenses]
 version = 2
+# The three crates of this repository are AGPL-3.0-only (LICENSE), not a license to accept from
+# dependencies.
+exceptions = [
+    { allow = ["AGPL-3.0-only"], crate = "proj-rs" },
+    { allow = ["AGPL-3.0-only"], crate = "proj-rs-georust" },
+    { allow = ["AGPL-3.0-only"], crate = "proj-rs-capi" },
+]
 allow = [
     "MIT",
     "Apache-2.0",

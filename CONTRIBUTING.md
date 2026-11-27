@@ -126,3 +126,11 @@ the notes of `docs/release-notes/v<version>.md`. A pull request that touches the
 (`tools/dist-cli.*`, `tools/release*`, `capi/tests/dist.*`, the workflow) runs the same build and
 tests and publishes nothing: the archives are artifacts of the run. Publishing the crates to
 crates.io is a separate step: [docs/PUBLISHING.md](docs/PUBLISHING.md).
+
+## License of your contribution
+
+The repository is released under the AGPL-3.0-only, and the maintainer also offers it under a
+commercial license ([COMMERCIAL-LICENSE.md](COMMERCIAL-LICENSE.md)). By opening a pull request you
+agree that your contribution is released under the AGPL-3.0-only, and you grant the maintainer the
+right to also license it under commercial terms. If you cannot agree to that, say so in the pull
+request before it is merged.
