@@ -6803,19 +6803,15 @@ fn canonical_name(name: &str) -> String {
 mod method_index_tests {
     use super::*;
 
-    fn scan(name: &str, wkt1: bool) -> Option<&'static MethodMap> {
+    fn scan(
+        name: &str,
+        name_of: impl Fn(&MethodMap) -> Option<&'static str>,
+    ) -> Option<&'static MethodMap> {
         let wanted = canonical_name(name);
         PROJECTION_METHODS
             .iter()
             .chain(OTHER_METHODS)
-            .find(|method| {
-                let known = if wkt1 {
-                    method.wkt1_name
-                } else {
-                    Some(method.wkt2_name)
-                };
-                known.is_some_and(|known| canonical_name(known) == wanted)
-            })
+            .find(|method| name_of(method).is_some_and(|known| canonical_name(known) == wanted))
     }
 
     #[test]
@@ -6830,12 +6826,12 @@ mod method_index_tests {
         for name in &names {
             assert_eq!(
                 method_by_name(name).map(std::ptr::from_ref),
-                scan(name, false).map(std::ptr::from_ref),
+                scan(name, |method| Some(method.wkt2_name)).map(std::ptr::from_ref),
                 "{name}"
             );
             assert_eq!(
                 method_by_wkt1_name(name).map(std::ptr::from_ref),
-                scan(name, true).map(std::ptr::from_ref),
+                scan(name, |method| method.wkt1_name).map(std::ptr::from_ref),
                 "{name}"
             );
         }
